@@ -1,0 +1,21 @@
+[project]
+name = 'ucap_evaluation'
+version = '0.0.1'
+authors = [
+    {name='Robert Hansen, PE',email='Robert.Hansen@cpuc.ca.gov'}
+]
+description = 'A set of tools for collecting outage data and evaluating unforced capacity (UCAP) values for resources within the CAISO service area and under CPUC jurisdiction.'
+readme = 'README.md'
+long_description_content_type = 'text/markdown'
+classifiers = [
+    'Programming Language :: Python :: 3'
+    'License :: OSI Approved :: MIT License'
+    'Operating System :: Microsoft :: Windows :: Windows 11'
+]
+license = 'MIT'
+package_dir = {'':'src'}
+requires-python = '>=3.9'
+
+[project.urls]
+url = 'https://github.com/roberthansen/ucap_evaluation'
+project_urls = {}

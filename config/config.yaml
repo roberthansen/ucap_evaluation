@@ -1,0 +1,36 @@
+caiso_curtailment_reports:
+  first_available_date: 2021-06-18
+  url:
+    standard: 'https://www.caiso.com/Documents/Curtailed-non-operational-generator-prior-trade-date-report-%Y%m%d.xlsx'
+    exceptions:
+      - type: list
+        dates: [2024-05-31]
+        template: 'https://www.caiso.com/Documents/Curtailed-non-operational-generator-prior-trade-date-report-%Y-%m-%d.xlsx'
+      - type: list
+        dates: [2024-06-01]
+        template: 'https://www.caiso.com/Documents/Curtailed-and-non-operational-generator-prior-trade-date-report-%b-%d-%Y.xlsx'
+      - type: range
+        dates: [2024-06-02,2025-01-12]
+        template:  'https://www.caiso.com/Documents/Curtailed-non-operational-generator-prior-trade-date-report-%b-%d-%Y.xlsx'
+  download_path_template: 'downloads\caiso_curtailment_reports\PriorTradeDateCurtailments_%Y-%m-%d.xlsx'
+  combined_reports_path: 'downloads\caiso_curtailment_reports.parquet'
+  download_log_path: 'logs\curtailments_download_log.csv'
+  text_log_path: 'logs\curtailments_download_log.txt'
+ucap_analysis:
+  text_log_path: 'logs\ucap_analysis_log.txt'
+  natures_of_work:
+    - PLANT_TROUBLE
+    - METERING_TELEMETRY
+    - TRANSMISSION_INDUCED
+    - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
+    - TRANSITIONAL_LIMITATION
+    - ENVIRONMENTAL_RESTRICTIONS
+    - ICCP
+    - RTU_RIG
+  years: [2022,2023,2024]
+  seasons:
+    summer: [[May 1, Oct 31]]
+    nonsummer: [[Jan 1, Apr 30], [Nov 1, Dec 31]]
+  hour_filter_path: 'config\supply_cushion_hours_2022-2024.csv'
+  results:
+    path_template: 'results\[type]_[season]_[year].csv'
