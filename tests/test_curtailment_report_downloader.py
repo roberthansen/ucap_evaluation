@@ -2,6 +2,7 @@ import sys
 import yaml
 import random
 import unittest
+from pathlib import Path
 from datetime import datetime as dt, date as d, timedelta as td
 
 sys.path=['M:\\Users\\RH2\\src\\ucap_evaluation'] + sys.path
@@ -10,12 +11,12 @@ from src.curtailment_report_downloader.curtailment_report_downloader \
 
 class TestCurtailmentReportDownloader(unittest.TestCase):
 
-    config_path = r'M:\Users\RH2\src\ucap_evaluation\config\config.yaml'
+    config_path = Path(r'M:\Users\RH2\src\ucap_evaluation\config\config.yaml')
 
     def __init__(self,*args,**kwargs):
         # Modifies the class initializer to incorporate configuration settings.
         super(TestCurtailmentReportDownloader,self).__init__(*args,**kwargs)
-        with open(self.config_path,'r') as f:
+        with self.config_path.open('r') as f:
             self.config = yaml.safe_load(f)
         self.curtailment_report_downloader = CurtailmentReportDownloader(self.config)
 
@@ -106,6 +107,7 @@ class TestCurtailmentReportDownloader(unittest.TestCase):
                 print('Successfully downloaded 1 file')
             else:
                 print('No downloads')
-        self.curtailment_report_downloader.clear_all_curtailment_reports()
+        self.curtailment_report_downloader.clear_all_downloads()
 
-unittest.main()
+if __name__=='__main__':
+    unittest.main()

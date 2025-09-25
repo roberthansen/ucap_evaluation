@@ -20,6 +20,10 @@ if __name__=='__main__':
 
     ucap_evaluator = UCAPEvaluator(config)
 
+    # Filter curtailment data for a single resource to evaluate:
+    # df = ucap_evaluator.curtailment_data.copy()
+    # ucap_evaluator.curtailment_data = df.loc[df.loc[:,'RESOURCE ID']=='CARLS1_2_CARCT1',:]
+
     for year in config['ucap_analysis']['years']:
         for season in config['ucap_analysis']['seasons'].items():
             season_name = season[0]
@@ -30,17 +34,17 @@ if __name__=='__main__':
             hour_filter = pd.DataFrame({
                 'START DATETIME' : start_datetimes,
                 'END DATETIME' : end_datetimes,
-                'INCLUDE' : [True] * len(start_datetimes)
+                'DEMAND HOUR' : [True] * len(start_datetimes)
             })
-            df = ucap_evaluator.calculate_equivalent_forced_outage_rate_during_demand_hours(hour_filter)
+            df = ucap_evaluator.calculate_equivalent_forced_outage_rate_during_grid_demand_hours(hour_filter)
             output_path = Path(replace_template_placeholders(
                 config['ucap_analysis']['results']['path_template'],
                 {'type' : 'efor', 'season' : season_name, 'year' : str(year)}
             ))
             df.to_csv(output_path,index=False)
 
-            # Demand Hours (EFORd):
-            hour_filter = ucap_evaluator.hour_filter.copy()
+            # Grid Demand Hours (EFORd):
+            hour_filter = ucap_evaluator.grid_hour_filter.copy()
             hour_filter = pd.concat([
                 select_hours_within_datetime_range(
                     start_datetime,
@@ -50,10 +54,31 @@ if __name__=='__main__':
                 for start_datetime,end_datetime in zip(start_datetimes,end_datetimes)
             ],ignore_index=True)
             hour_filter = coalesce_hour_filter(hour_filter)
-            hour_filter = hour_filter.loc[hour_filter.loc[:,'INCLUDE'],:]
-            df = ucap_evaluator.calculate_equivalent_forced_outage_rate_during_demand_hours(hour_filter)
+            hour_filter = hour_filter.loc[hour_filter.loc[:,'DEMAND HOUR'],:]
+            df = ucap_evaluator.calculate_equivalent_forced_outage_rate_during_grid_demand_hours(hour_filter)
             output_path = Path(replace_template_placeholders(
                 config['ucap_analysis']['results']['path_template'],
                 {'type' : 'eford', 'season' : season_name, 'year' : str(year)}
             ))
             df.to_csv(output_path,index=False)
+
+            # Resource-Level Demand Hours (EFORd):
+            hour_filter = ucap_evaluator.resource_hour_filter.copy()
+            hour_filter = pd.concat([
+                select_hours_within_datetime_range(
+                    start_datetime,
+                    end_datetime,
+                    hour_filter
+                )
+                for start_datetime,end_datetime in zip(start_datetimes,end_datetimes)
+            ],ignore_index=True)
+            hour_filter = coalesce_hour_filter(hour_filter)
+            hour_filter = hour_filter.loc[hour_filter.loc[:,'DEMAND HOUR'],:]
+            df = ucap_evaluator.calculate_equivalent_forced_outage_rate_during_resource_demand_hours(hour_filter)
+            output_path = Path(replace_template_placeholders(
+                config['ucap_analysis']['results']['path_template'],
+                {'type' : 'eford', 'season' : season_name, 'year' : str(year)}
+            ))
+            
+            df.to_csv(output_path,index=False)
+

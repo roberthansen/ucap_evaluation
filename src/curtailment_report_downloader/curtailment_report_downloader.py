@@ -1,5 +1,4 @@
 import io
-import yaml
 import pycurl
 from pathlib import Path
 import pandas as pd

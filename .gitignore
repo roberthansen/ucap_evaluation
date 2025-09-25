@@ -3,5 +3,6 @@
 *.csv
 *.parquet
 *.txt
+login.*
 __pycache__
 __pycache__/*

@@ -16,21 +16,36 @@ caiso_curtailment_reports:
   combined_reports_path: 'downloads\caiso_curtailment_reports.parquet'
   download_log_path: 'logs\curtailments_download_log.csv'
   text_log_path: 'logs\curtailments_download_log.txt'
+demand_hours_analysis:
+  resource_demand_hours_path: 'results\resource_demand_hours.parquet'
 ucap_analysis:
   text_log_path: 'logs\ucap_analysis_log.txt'
   natures_of_work:
-    - PLANT_TROUBLE
-    - METERING_TELEMETRY
-    - TRANSMISSION_INDUCED
-    - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
-    - TRANSITIONAL_LIMITATION
+    # Identified in 2024:
+    # - PLANT_TROUBLE
+    # - METERING_TELEMETRY
+    # - TRANSMISSION_INDUCED
+    # - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
+    # - TRANSITIONAL_LIMITATION
+    # - ENVIRONMENTAL_RESTRICTIONS
+    # - ICCP
+    # - RTU_RIG
+    # Included in CAISO's 2025 analysis:
+    - AMBIENT_DUE_TO_TEMP
+    - AVR_EXITER
     - ENVIRONMENTAL_RESTRICTIONS
     - ICCP
+    - METERING_TELEMETRY
+    - PLANT_MAINTENANCE
+    - PLANT_TROUBLE
+    - POWER_SYSTEM_STABILIZATION
     - RTU_RIG
+    - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
+    - TRANSITIONAL_LIMITATION
   years: [2022,2023,2024]
   seasons:
     summer: [[May 1, Oct 31]]
     nonsummer: [[Jan 1, Apr 30], [Nov 1, Dec 31]]
-  hour_filter_path: 'config\supply_cushion_hours_2022-2024.csv'
+  hour_filter_path: 'config\availability_assessment_hours_2022-2024.csv'
   results:
-    path_template: 'results\[type]_[season]_[year].csv'
+    path_template: 'results\[type]_[season]_[year]_AAH.csv'

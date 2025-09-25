@@ -41,7 +41,7 @@ def hour_filter_overlap(tr_0:datetime,tr_1:datetime,hour_filter:DataFrame):
     '''
     overlap = 0
     hour_filter = hour_filter.loc[
-        (hour_filter.loc[:,'START DATETIME']<=tr_1) * \
+        (hour_filter.loc[:,'START DATETIME']<=tr_1) & \
         (hour_filter.loc[:,'END DATETIME']>=tr_0),
         :
     ]
@@ -64,68 +64,89 @@ def select_hours_within_datetime_range(tr_0:datetime,tr_1:datetime,hour_filter:D
                 first range
             tr_1 - a datetime object specifying the end date and time for the
                 first range
-            hour_filter - a pandas dataframe with columns labeled 'DATETIME' and
-                'INCLUDE' indicating selected hours, generally expected to
-                constitute a year of hours.
+            hour_filter - a pandas dataframe with columns labeled
+                'START DATETIME', 'END DATETIME' and 'DEMAND HOUR', and
+                optionally 'RESOURCE ID', indicating selected hours, generally
+                expected to constitute a year of hours.
         
         returns:
             a list of hours selected from the input list containing only hours
             within the datetime range bounded by the input datetimes.
     '''
     return hour_filter.loc[
-        (hour_filter.loc[:,'DATETIME']>=tr_0)*
-        (hour_filter.loc[:,'DATETIME']<=tr_1),
+        (hour_filter.loc[:,'START DATETIME']>=tr_0) & \
+        (hour_filter.loc[:,'END DATETIME']<=tr_1),
         :
     ].reset_index()
 
 def coalesce_hour_filter(hour_filter:DataFrame):
     '''
-    Combines contiguous hours within the input hour filter, and defines the end
-    date time of each full block.
+    Combines contiguous hours with the same Demand Hour value (true or false)
+    within the input hour filter.
 
         parameters:
-            hour_filter - a pandas dataframe with columns labeled 'DATETIME' and
-                'INCLUDE' indicating selected hours, generally expected to
+            hour_filter - a pandas dataframe with columns labeled
+                'START DATETIME', 'END DATETIME', 'DEMAND HOUR', and optionally
+                'RESOURCE ID', indicating selected hours, generally expected to
                 constitute a year of hours.
         
         returns:
             a pandas dataframe with columns labeled 'START DATETIME',
-            'END DATETIME', and 'INCLUDE' representing the start and end
-            datetimes for each contiguous block of filter hours
+            'END DATETIME', 'DEMAND HOUR', and 'RESOURCE ID' if present in the input
+            representing the start and end datetimes for each contiguous block
+            of filter hours
     '''
 
-    # Rename column DATETIME --> START DATETIME:
-    hour_filter.rename(columns={'DATETIME':'START DATETIME'},inplace=True)
-
     # Ensure data are sequential:
-    hour_filter.sort_values(by=['START DATETIME'],axis='index',ascending=True,inplace=True)
-
-    # Add END DATETIME column:
-    hour_filter.loc[:,'END DATETIME'] = hour_filter.loc[:,'START DATETIME'] + timedelta(hours=1)
+    columns = list(filter(lambda s: s in hour_filter.columns,['RESOURCE ID','START DATETIME']))
+    hour_filter.sort_values(by=columns,axis='index',ascending=True,inplace=True)
 
     # Reset index:
     hour_filter.reset_index(inplace=True)
-    hour_filter = hour_filter.loc[:,['START DATETIME','END DATETIME','SEASON','INCLUDE']]
-    
-    # Iterate through hours to find consecutive blocks with the same INCLUDE
+    columns = filter(lambda s:s in hour_filter.columns,['RESOURCE ID','START DATETIME','END DATETIME','SEASON','DEMAND HOUR'])
+    hour_filter = hour_filter.loc[:,columns]
+
+    # Iterate through hours to find consecutive blocks with the same DEMAND HOUR
     # value:
-    for i in hour_filter.index:
-        if i<max(hour_filter.index) and \
-            hour_filter.loc[i,'END DATETIME']==hour_filter.loc[i+1,'START DATETIME'] and \
-            hour_filter.loc[i,'INCLUDE']==hour_filter.loc[i+1,'INCLUDE']:
-                hour_filter.loc[i+1,'START DATETIME'] = hour_filter.loc[i,'START DATETIME']
-        else:
-            pass
+    use_resource_id = 'RESOURCE ID' in hour_filter.columns
+    if use_resource_id:
+        for i in hour_filter.index:
+            if i<max(hour_filter.index) and \
+                hour_filter.loc[i,'RESOURCE ID']==hour_filter.loc[i+1,'RESOURCE ID'] and \
+                hour_filter.loc[i,'END DATETIME']==hour_filter.loc[i+1,'START DATETIME'] and \
+                hour_filter.loc[i,'DEMAND HOUR']==hour_filter.loc[i+1,'DEMAND HOUR']:
+                    hour_filter.loc[i+1,'START DATETIME'] = hour_filter.loc[i,'START DATETIME']
+            else:
+                pass
+    else:
+        for i in hour_filter.index:
+            if i<max(hour_filter.index) and \
+                hour_filter.loc[i,'END DATETIME']==hour_filter.loc[i+1,'START DATETIME'] and \
+                hour_filter.loc[i,'DEMAND HOUR']==hour_filter.loc[i+1,'DEMAND HOUR']:
+                    hour_filter.loc[i+1,'START DATETIME'] = hour_filter.loc[i,'START DATETIME']
+            else:
+                pass
 
     # Aggregate hours into blocks with start and end datetimes:
-    hour_filter = hour_filter.loc[
-        :,
-        ['START DATETIME','END DATETIME','INCLUDE']
-    ].groupby(
-        ['START DATETIME','INCLUDE']
-    ).max().reset_index().loc[
-        :,
-        ['START DATETIME','END DATETIME','INCLUDE']
-    ]
+    if use_resource_id:
+        hour_filter = hour_filter.loc[
+            :,
+            ['RESOURCE ID','START DATETIME','END DATETIME','DEMAND HOUR']
+        ].groupby(
+            ['RESOURCE ID','START DATETIME','DEMAND HOUR']
+        ).max().reset_index().loc[
+            :,
+            ['RESOURCE ID','START DATETIME','END DATETIME','DEMAND HOUR']
+        ]
+    else:
+        hour_filter = hour_filter.loc[
+            :,
+            ['START DATETIME','END DATETIME','DEMAND HOUR']
+        ].groupby(
+            ['START DATETIME','DEMAND HOUR']
+        ).max().reset_index().loc[
+            :,
+            ['START DATETIME','END DATETIME','DEMAND HOUR']
+        ]
 
     return hour_filter
