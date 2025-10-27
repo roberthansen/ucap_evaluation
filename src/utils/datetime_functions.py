@@ -4,7 +4,7 @@ from pandas import DataFrame
 def datetime_range_overlap(tr0_0:datetime,tr0_1:datetime,tr1_0:datetime,tr1_1:datetime):
     '''
     Calculate the duration of overlap between two datetime ranges, defined by
-    the start and end dates and times.
+    the start and end dates and times, in hours.
 
         parameters:
             tr0_0 - a datetime object specifying the start date and time for the
@@ -19,7 +19,7 @@ def datetime_range_overlap(tr0_0:datetime,tr0_1:datetime,tr1_0:datetime,tr1_1:da
             a floating point value representing the duration in hours of overlap
             between the two input datetime ranges.
     '''
-    overlap = max(min(tr0_1,tr1_1) - max(tr0_0,tr1_0), timedelta(hours=0))
+    overlap = max( min(tr0_1, tr1_1) - max(tr0_0, tr1_0), timedelta(hours=0))
     return overlap.total_seconds() / 3600
 
 def hour_filter_overlap(tr_0:datetime,tr_1:datetime,hour_filter:DataFrame):
@@ -40,12 +40,12 @@ def hour_filter_overlap(tr_0:datetime,tr_1:datetime,hour_filter:DataFrame):
             between the input datetime range and list of hours.
     '''
     overlap = 0
-    hour_filter = hour_filter.loc[
+    applicable_hour_filter = hour_filter.loc[
         (hour_filter.loc[:,'START DATETIME']<=tr_1) & \
         (hour_filter.loc[:,'END DATETIME']>=tr_0),
         :
     ]
-    for _,r in hour_filter.iterrows():
+    for _,r in applicable_hour_filter.iterrows():
         overlap += datetime_range_overlap(
             tr_0,
             tr_1,

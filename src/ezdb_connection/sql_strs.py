@@ -76,3 +76,19 @@ def get_economic_bid(start_datetime:dt=None,end_datetime:dt=None,resource_id:str
             WHERE "DateTime">=$1 AND "DateTime"<$2;
             EXECUTE economic_bid();'''
     return sql_str
+
+def get_master_capability_list():
+    sql_str = '''
+        SELECT
+            *
+        FROM caisomastercapability_current
+    '''
+    return sql_str
+
+def get_master_file():
+    sql_str = '''
+        SELECT
+            *
+        FROM caisomasterfile_current
+    '''
+    return sql_str

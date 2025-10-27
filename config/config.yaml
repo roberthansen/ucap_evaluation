@@ -16,6 +16,10 @@ caiso_curtailment_reports:
   combined_reports_path: 'downloads\caiso_curtailment_reports.parquet'
   download_log_path: 'logs\curtailments_download_log.csv'
   text_log_path: 'logs\curtailments_download_log.txt'
+caiso_master_capability_list:
+  download_path: 'config\master_capability_list.parquet'
+caiso_master_file:
+  download_path: 'config\master_file.parquet'
 demand_hours_analysis:
   resource_demand_hours_path: 'results\resource_demand_hours.parquet'
 ucap_analysis:
@@ -30,22 +34,49 @@ ucap_analysis:
     # - ENVIRONMENTAL_RESTRICTIONS
     # - ICCP
     # - RTU_RIG
+
     # Included in CAISO's 2025 analysis:
+    # - AMBIENT_DUE_TO_TEMP
+    # - AVR_EXITER
+    # - ENVIRONMENTAL_RESTRICTIONS
+    # - ICCP
+    # - METERING_TELEMETRY
+    # - PLANT_MAINTENANCE
+    # - PLANT_TROUBLE
+    # - POWER_SYSTEM_STABILIZATION
+    # - RTU_RIG
+    # - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
+    # - TRANSITIONAL_LIMITATION
+
+    # Include most codes:
+    - AMBIENT_DUE_TO_FUEL_INSUFFICIENCY
     - AMBIENT_DUE_TO_TEMP
+    - AMBIENT_NOT_DUE_TO_TEMP
+    - ANNUAL_USE_LIMIT_REACHED
     - AVR_EXITER
     - ENVIRONMENTAL_RESTRICTIONS
     - ICCP
     - METERING_TELEMETRY
+    - MONTHLY_USE_LIMIT_REACHED
+    - NEW_GENERATOR_TEST_ENERGY
+    - OTHER_USE_LIMIT_REACHED
     - PLANT_MAINTENANCE
     - PLANT_TROUBLE
     - POWER_SYSTEM_STABILIZATION
+    - RIMS_OUTAGE
+    - RIMS_TESTING
     - RTU_RIG
+    - SHORT_TERM_USE_LIMIT_REACHED
     - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
     - TRANSITIONAL_LIMITATION
+    - TRANSMISSION_INDUCED
+    - UNIT_SUPPORTING_STARTUP
+    - UNIT_TESTING
   years: [2022,2023,2024]
   seasons:
-    summer: [[May 1, Oct 31]]
-    nonsummer: [[Jan 1, Apr 30], [Nov 1, Dec 31]]
+    summer: [[Jun 1, Oct 31]]
+    nonsummer: [[Jan 1, May 30], [Nov 1, Dec 31]]
   hour_filter_path: 'config\availability_assessment_hours_2022-2024.csv'
   results:
-    path_template: 'results\[type]_[season]_[year]_AAH.csv'
+    outage_path_template: 'results\eford_by_resource_and_NOW_AAH_[years].csv'
+    demand_hours_path_template: 'results\demand_hours_by_resource_AAH_[years].csv'
