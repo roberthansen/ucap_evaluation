@@ -2,6 +2,7 @@
 This package is intended to help users collect resource curtailment data from CAISO's website, and analyze the data to determine resource-specific Unforced Capacity (UCAP) values for use in CPUC's Resource Adequacy proceeding, R.23-10-011.
 
 The package includes scripts written in Python, and requires following standard libraries; although the package was tested with the listed versions, other versions may work:
+- python 3.9.7
 - openpyxl 3.0.9
 - numpy 1.22.3
 - pandas 1.3.4
@@ -12,15 +13,26 @@ Configuration files are written in yaml and should be updated to reflect the use
 
 This package was developed in Windows 11, but should work on any operating system after adjusting the config.yaml file to reflect the directory structure.
 
+# Using The Scripts
+In order to use this package, ensure Python and the requisite libraries are installed. Review the configuration file at ./config/config.yaml and make any necessary changes. then, run the following scripts:
+1. ./scripts/download_curtailment_reports.py
+1. ./scripts/evaluate_ucap.py
+
+# UCAP Evaluation Workbook
+The scripts in this package produce a filtered and aggregated table of curtailments and outages, organized by Resource ID, Nature-of-Work, year, and season. The resulting table, saved as a .csv file, is intended to be copied into an Excel workbook that performs the final calculations and presents all EFORd and UCAP values at multiple levels of granularity. The current version of this workbook is located at ./results/UCAP_2022-2024_AAH.xlsx.
+
 # UCAP Definition
-UCAP means "Unforced Capacity". It is a measure of the expected capacity available to the grid, accounting for forced outages. There are many technical nuances and design decisions within this definition that must be considered in order to implement a UCAP framework. Some outstanding and resolved issues are presented below.
+UCAP means "Unforced Capacity". It is a measure of the expected capacity available to the grid, accounting for forced outages. There are many technical nuances and design decisions within this definition that must be considered in order to implement a UCAP framework. Energy Division proposes to define UCAP based on Equivalent Forced Outage Rates during Demand (EFORd), with the following formula.
+
+$$\text{UCAP}_{r}=\text{Pmax}_{r}\cdot(100\%-\text{EFORd}_{r})$$
+
+There are many assumptions and nuances involved in defining EFORd as used in this formula. Several outstanding and resolved issues are presented in the sections below.
 
 ## Resource Grouping
-Every resource will have its own UCAP value
-We have not concluded whether individual units will be assigned UCAP values based solely on their own forced outage rates, or on the collective outage rate of some group to which they belong. Furthermore, we have not yet determined how resources would be grouped. The following options are under consideration:
+Every resource will have its own UCAP value, expressed in units of MW. We have not concluded whether individual units will be assigned UCAP values based solely on their own forced outage rates, or on the collective outage rate of some group to which they belong. Consequently, we currently evaluate both an "individually-assessed UCAP" and a "group-assessed UCAP." We proposed to use the already established Resource Types, as presented in CPUC's Master Resource Database for grouping resources.
 
 ## All Hours vs. Demand Hours
-We have determined the UCAP framework will apply an equivalent forced outage rate evaluated during demand hours (EFORd), as opposed to considering all hours within each evaluation period. However, the definition of demand hours is open to interpretation.
+We have determined the UCAP framework will apply an EFORd, as opposed to considering all hours within each evaluation period, i.e., EFOR. This allows UCAP to focus on ensuring adequate capacity during critical hours. However, according to the North American Electric Reliability Corporation's (NERC) Generating Availability Data System (GADS) Manual and Appendices, the definition of demand hours is flexible.
 
 ## Selection of Demand Hours
 We base our use of demand hours on the definition of EFORd in the GADS Manual, which notes that there are numerous ways to determine demand hours. We further don't have clear insight into how demand hours are determined in GADS itself. We observe three potential approaches broadly, each with additional considerations:
@@ -35,12 +47,31 @@ We base our use of demand hours on the definition of EFORd in the GADS Manual, w
     - At-Risk Hours
     - Availability Assessment Hours
 
-Our current plan is to implement a grid-level evaluation of demand hours matching CAISO's Availability Assessment Hours, but this is a topic of active discussion. Previously, we had considered adopting CAISO's proposed Supply Cushion approach, but they have since encountered significant stakeholder pushback and are looking into alternatives. As the primary benefit of adopting Supply Cushion hours was alignment between CAISO and CPUC, we no longer believe this is the best solution.
+At present, Energy Division plans to implement a grid-level evaluation of demand hours matching the Availability Assessment Hours defined annualy in CPUC Decisions. We had earlier considered adopting CAISO's proposed Supply Cushion approach, but CAISO is now considering alternatives in response to stakeholder feedback. As an alternative, Energy Division now proposes to apply the Availability Assessment Hours (AAH) determined by CAISO and approved through CPUC Decisions, most recently D.25-06-048.
+
+For historic years 2022-2025, the Availability Assessment Hours are as follows[^0]:
+
+| Season | Months  | Hours Ending | Times                                          |
+| :---   | :---    | :---:        | :---:                                          |
+| Winter | Nov-Feb | HE 17-21     | 6:00 [pm]{.smallcaps} - 9:00 [pm]{.smallcaps}  |
+| Spring | Mar-May | HE 18-22     | 5:00 [pm]{.smallcaps} - 10:00 [pm]{.smallcaps} |
+| Summer | Jun-Oct | HE 17-21     | 6:00 [pm]{.smallcaps} - 9:00 [pm]{.smallcaps}  |
+
+
+Beginning in 2026, the AAH for the winter season shift one hour later, matching the summer season resulting in the following definition:
+
+| Season | Months  | Hours Ending | Times                                          |
+| :---   | :---    | :---:        | :---:                                          |
+| Winter | Nov-Feb | HE 18-22     | 5:00 [pm]{.smallcaps} - 10:00 [pm]{.smallcaps} |
+| Spring | Mar-May | HE 18-22     | 5:00 [pm]{.smallcaps} - 10:00 [pm]{.smallcaps} |
+| Summer | Jun-Oct | HE 17-21     | 6:00 [pm]{.smallcaps} - 9:00 [pm]{.smallcaps}  |
+
+[^0]: AAH for 2022 adopted through D.18-06-30; AAH for 2023 adopted through D.22-06-050; AAH for 2024-2025 adopted through D.23-06-029; AAH for 2025 adopted through D.25-06-048.
 
 ## Evaluation Periods
 Forced outage rates can be evaluated for any period of time. Common metrics include monthly, seasonal, and annual. The proposed UCAP framework will evaluate UCAP on a seasonal basis, with two seasons as defined below:
-- Summer&mdash;May through October
-- Non-Summer&mdash;January through April, November, and December
+- Summer&mdash;June through October
+- Non-Summer&mdash;January through May, November, and December
 
 The seasons will be evaluated within calendar years.
 
@@ -60,28 +91,28 @@ Resource outages in OMS are flagged with two required parameters: an outage type
 
 | OUTAGE TYPE | NATURE OF WORK                            | Include in UCAP |
 | :---:       | :---                                      | :---:           |
-| FORCED      | AMBIENT_DUE_TO_FUEL_INSUFFICIENCY         | No              |
+| FORCED      | AMBIENT_DUE_TO_FUEL_INSUFFICIENCY         | Yes             |
 | FORCED      | AMBIENT_DUE_TO_TEMP                       | Yes[^1]         |
-| FORCED      | AMBIENT_NOT_DUE_TO_TEMP                   | No              |
-| FORCED      | ANNUAL_USE_LIMIT_REACHED                  | No              |
+| FORCED      | AMBIENT_NOT_DUE_TO_TEMP                   | Yes             |
+| FORCED      | ANNUAL_USE_LIMIT_REACHED                  | Yes             |
 | FORCED      | AVR_EXITER                                | Yes[^2]         |
 | FORCED      | ENVIRONMENTAL_RESTRICTIONS                | Yes             |
 | FORCED      | ICCP                                      | Yes             |
 | FORCED      | METERING_TELEMETRY                        | Yes             |
-| FORCED      | MONTHLY_USE_LIMIT_REACHED                 | No              |
+| FORCED      | MONTHLY_USE_LIMIT_REACHED                 | Yes             |
 | FORCED      | NEW_GENERATOR_TEST_ENERGY                 | No              |
-| FORCED      | OTHER_USE_LIMIT_REACHED                   | No              |
+| FORCED      | OTHER_USE_LIMIT_REACHED                   | Yes             |
 | FORCED      | PLANT_MAINTENANCE                         | Yes             |
 | FORCED      | PLANT_TROUBLE                             | Yes             |
 | FORCED      | POWER_SYSTEM_STABILIZATION                | Yes[^2]         |
-| FORCED      | RIMS_OUTAGE                               | No              |
+| FORCED      | RIMS_OUTAGE                               | Yes             |
 | FORCED      | RIMS_TESTING                              | No              |
 | FORCED      | RTU_RIG                                   | Yes             |
-| FORCED      | SHORT_TERM_USE_LIMIT_REACHED              | No              |
+| FORCED      | SHORT_TERM_USE_LIMIT_REACHED              | Yes             |
 | FORCED      | TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL | Yes             |
 | FORCED      | TRANSITIONAL_LIMITATION                   | Yes             |
 | FORCED      | TRANSMISSION_INDUCED                      | No              |
-| FORCED      | UNIT_SUPPORTING_STARTUP                   | No              |
+| FORCED      | UNIT_SUPPORTING_STARTUP                   | Yes             |
 | FORCED      | UNIT_TESTING                              | No              |
 | PLANNED     | AMBIENT_DUE_TO_FUEL_INSUFFICIENCY         | No              |
 | PLANNED     | AMBIENT_DUE_TO_TEMP                       | No              |
@@ -112,10 +143,27 @@ We have signaled to stakeholders that we may allow for some outage events to be 
 - Automatically identify and exclude extreme outage events with a predefined rubric.
 
 ## Handling New Resources
-Since we propose to predicate the UCAP framework on historic outage data, new resources pose a clear problem, especially if we elect to evaluate UCAP on the basis of individual resources. At the moment, we plan to address this issue by applying a weighted group-averaged outage rate in place of any missing historic data.
+Since we propose to predicate the UCAP framework on historic outage data, new resources pose a challenge, especially if we elect to evaluate UCAP on the basis of individual resources. Our current proposal is to apply a capacity-weighted group average outage rate in place of any missing historic data. For each resource in a particular year and season, there are thus three possibilities:
+
+- No individual data is available---use EFORd value evaluated for entire group for the missing year and season.
+- Full season of data is available---use EFORd value evaluated for the individual resource during the year and season.
+- Some individual data is available---blend individual and group EFORd values for the year and season, weighted by the number of demand hours individual data is available vs. hours individual data is unavailable.
+
+We propose to apply calendar years when evaluating EFORd. This means the non-summer season for a given year includes two non-contiguous blocks of months: January through May and October through December.
+
+The availability of individual data is determined from each resource's Commercial Operation Date (COD), which is specified in CAISO's Master Generator Capability List and included in the Master Resource Database and excerpted in the UCAP Evaluation Workbook. A COD within an evaluation year and season will thus result in a blended EFORd, reflecting both individual and group outage data.
 
 ## Ambient Outages due to Temperature
-We propose to incorporate an additional deration factor due to ambient temperatures into the UCAP evaluation framework. Forced outages flagged as having been due to ambient temperatures will be excluded from the initial evaluation of forced outage rates, and instead will be used to forecast derations for future years using historic weather data and climate modeling. Outage rates due to ambient temperatures will be calculated in the following general process, with some technical details yet to be determined:
-- Determine ambient temperatures coincident with each reported outage.
-- Perform a linear regression analysis of outages vs. ambient temperatures to determine percent outage as a function of temperature for each resource.
-- Calculate forecast outages using a modeled weather-year for the 
+We propose to incorporate an additional deration factor due to ambient temperatures into the UCAP evaluation framework. Forced outages flagged as having been due to ambient temperatures are presented in the UCAP Evaluation Workbook separately from the forced outage rates attributed to other natures-of-work, although the combined EFORd values are reflected in the UCAP MW values. In later updates, we propose to apply weather-normalized derations for future years using historic weather data and climate modeling. Instead of calculating EFORd in the same way as other natures-of-work, outage rates due to ambient temperatures will be calculated in the following sequence, with some technical details yet to be determined:
+
+- Identify a nearby weather station for each resource and retrieve historic weather data for the evaluation period.
+- Determine ambient temperatures coincident with each reported deration due to ambient temperature, assuming zero deration only where no forced or planned outages of any nature-of-work are reported.
+- Perform a linear regression analysis of outages vs. ambient temperatures to determine percent outage as a function of temperature for each resource, including all hours.
+- Calculate forecast outages using a normalized weather-year for each weather station and a piecewise-linear deration curve reflecting the best-fit line with a minimum deration of zero.
+- Evaluate weather-normalized EFORd during AAH.
+
+## Individual vs. Group Assessment
+Per CPUC D.25-06-048, the UCAP Evaluation Workbook presents two sets of EFORd and UCAP values, representing individual and group assessment methodologies. The individual assessment methodology calculates 
+
+# Conclusion
+CPUC's UCAP methodology remains in active development, and Energy Division looks forward to working with stakeholders to incorporate the remaining components and further refine our calculations prior to official implementation, anticipated in 2028.

@@ -1,8 +1,9 @@
-*.xlsx
-*.xls
-*.csv
-*.parquet
-*.txt
 login.*
+config/*.parquet
+downloads/*
+logs/*
+results/*.csv
+*presentations/*
+.vscode/*
 __pycache__
 __pycache__/*
