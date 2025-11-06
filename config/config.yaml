@@ -16,10 +16,10 @@ caiso_curtailment_reports:
   combined_reports_path: 'downloads\caiso_curtailment_reports.parquet'
   download_log_path: 'logs\curtailments_download_log.csv'
   text_log_path: 'logs\curtailments_download_log.txt'
-caiso_master_capability_list:
-  download_path: 'config\master_capability_list.parquet'
-caiso_master_file:
-  download_path: 'config\master_file.parquet'
+master_resource_database:
+  path: 'config\MRD Final 2026_09182025 ver2.xlsx'
+  worksheet_name: 'MRD'
+  caiso_master_capability_list_worksheet_name: 'mastergen (updated SEP)'
 demand_hours_analysis:
   resource_demand_hours_path: 'results\resource_demand_hours.parquet'
 ucap_analysis:

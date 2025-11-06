@@ -25,16 +25,10 @@ class UCAPEvaluator:
         self.grid_hour_filter = pd.read_csv(config['ucap_analysis']['hour_filter_path'],parse_dates=[0,1])
         # self.resource_hour_filter = pd.read_parquet(config['demand_hours_analysis']['resource_demand_hours_path'])
 
-        master_capability_list_path = Path(config['caiso_master_capability_list']['download_path'])
-        if not master_capability_list_path.is_file():
-            retrieve_master_capability_list()
-        self.master_capability_list = pd.read_parquet(master_capability_list_path)
+        master_resource_database_path = Path(config['master_resource_database']['path'])
+        master_capability_list_worksheet_name = config['master_resource_database']['caiso_master_capability_list_worksheet_name']
+        self.master_capability_list = pd.read_excel(master_resource_database_path,master_capability_list_worksheet_name)
 
-        master_file_path = Path(config['caiso_master_file']['download_path'])
-        if not master_file_path.is_file():
-            retrieve_master_file()
-        self.master_file = pd.read_parquet(master_file_path)
-    
     def calculate_equivalent_forced_outage_rates_by_date_range(self,start_date:d,end_date:d):
         '''
         Filters curtailment data for the input range of dates, then evaluates
@@ -259,18 +253,18 @@ class UCAPEvaluator:
         end_datetime = shared_hour_filter.loc[:,'END DATETIME'].max().to_pydatetime()
         
         # Split curtailment data into smaller chunks for multiprocessing:
-        df_mp = [{
+        mp_chunks = [{
             'df': x,
             'start_datetime': start_datetime,
             'end_datetime': end_datetime,
             'natures_of_work': self.natures_of_work,
-            'master_capability_list' : self.master_capability_list,
+            'master_capability_list' : self.master_capability_list.loc[:,['RESOURCE_ID','COD']],
             'shared_hour_filter' : shared_hour_filter
         } for x in np.array_split(df,32)]
 
         # Run multiprocessing helper function on each chunk in parallel:
         with mp.Pool(processes=8) as mp_pool:
-            df = pd.concat(mp_pool.map(multiprocessing_helper_function,df_mp))
+            df = pd.concat(mp_pool.map(multiprocessing_helper_function,mp_chunks))
 
         df.sort_values(by=['RESOURCE ID','NATURE OF WORK'],inplace=True)
 
@@ -430,14 +424,15 @@ def multiprocessing_helper_function(chunk):
     # Filter curtailment data using commercial operation start date in the
     # Master Capability List:
     df = df.set_index('RESOURCE ID').join(
-        chunk['master_capability_list'].loc[:,['ResID','CommercialOperDate']].set_index('ResID')
+        chunk['master_capability_list'].set_index('RESOURCE_ID')
     ).reset_index().rename(
         columns={
             'index':'RESOURCE ID',
-            'CommercialOperDate':'COMMERCIAL OPERATION DATE'
+            'COD':'COMMERCIAL OPERATION DATE'
         }
     )
     df.loc[df.loc[:,'COMMERCIAL OPERATION DATE'].isnull(),'COMMERCIAL OPERATION DATE'] = dt(1900,1,1,0,0)
+    df.loc[:,'COMMERCIAL OPERATION DATE'] = df.loc[:,'COMMERCIAL OPERATION DATE'].map(lambda x:dt.fromordinal(x-2+dt(1900,1,1).toordinal()) if type(x)==int else x)
     df.loc[(df.loc[:,'CURTAILMENT END DATE TIME']>=df.loc[:,'COMMERCIAL OPERATION DATE']),:]
 
     # Constrain the starts of curtailments to commercial operation date:
