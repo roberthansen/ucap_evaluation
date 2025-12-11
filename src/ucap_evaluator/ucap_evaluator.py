@@ -5,8 +5,6 @@ from pathlib import Path
 from datetime import date as d,time as t,datetime as dt,timedelta as td
 from src.logging.logging import TextLogger
 from src.utils.datetime_functions import datetime_range_overlap,hour_filter_overlap,select_hours_within_datetime_range,coalesce_hour_filter
-from scripts.retrieve_master_capability_list import retrieve_master_capability_list
-from scripts.retrieve_master_file import retrieve_master_file
 
 class UCAPEvaluator:
     '''
@@ -25,9 +23,11 @@ class UCAPEvaluator:
         self.grid_hour_filter = pd.read_csv(config['ucap_analysis']['hour_filter_path'],parse_dates=[0,1])
         # self.resource_hour_filter = pd.read_parquet(config['demand_hours_analysis']['resource_demand_hours_path'])
 
-        master_resource_database_path = Path(config['master_resource_database']['path'])
-        master_capability_list_worksheet_name = config['master_resource_database']['caiso_master_capability_list_worksheet_name']
+        master_resource_database_path = Path(config['resource_information']['master_resource_database']['path'])
+        master_capability_list_worksheet_name = config['resource_information']['master_resource_database']['caiso_master_capability_list_worksheet_name']
         self.master_capability_list = pd.read_excel(master_resource_database_path,master_capability_list_worksheet_name)
+
+
 
     def calculate_equivalent_forced_outage_rates_by_date_range(self,start_date:d,end_date:d):
         '''
@@ -266,6 +266,13 @@ class UCAPEvaluator:
         with mp.Pool(processes=8) as mp_pool:
             df = pd.concat(mp_pool.map(multiprocessing_helper_function,mp_chunks))
 
+        # Aggregate across multiprocessing chunks:
+        df = df.loc[:,[
+            'RESOURCE ID','NATURE OF WORK','OUTAGE MWH DURING DEMAND'
+        ]].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
+            'OUTAGE MWH DURING DEMAND': 'sum'
+        }).reset_index()
+
         df.sort_values(by=['RESOURCE ID','NATURE OF WORK'],inplace=True)
 
         return df
@@ -435,40 +442,49 @@ def multiprocessing_helper_function(chunk):
     df.loc[:,'COMMERCIAL OPERATION DATE'] = df.loc[:,'COMMERCIAL OPERATION DATE'].map(lambda x:dt.fromordinal(x-2+dt(1900,1,1).toordinal()) if type(x)==int else x)
     df.loc[(df.loc[:,'CURTAILMENT END DATE TIME']>=df.loc[:,'COMMERCIAL OPERATION DATE']),:]
 
-    # Constrain the starts of curtailments to commercial operation date:
-    df.loc[:,'CURTAILMENT START DATE TIME'] = df.apply(
-        lambda r: max(r.loc[['CURTAILMENT START DATE TIME','COMMERCIAL OPERATION DATE']]),
-        axis='columns',
-        result_type='expand'
-    )
+    if len(df.index>0):
+        # Constrain the starts of curtailments to commercial operation date:
+        df.loc[:,'CURTAILMENT START DATE TIME'] = df.apply(
+            lambda r: max(r.loc[['CURTAILMENT START DATE TIME','COMMERCIAL OPERATION DATE']]),
+            axis='columns',
+            result_type='expand'
+        )
 
-    # Calculate reported outage hours within date range and hour filter:
-    df = df.loc[
-        (df.loc[:,'CURTAILMENT START DATE TIME']<=chunk['shared_hour_filter'].loc[:,'END DATETIME'].max()) \
-        & (df.loc[:,'CURTAILMENT END DATE TIME']>=chunk['shared_hour_filter'].loc[:,'START DATETIME'].min()),
-        :
-    ]
+        # Calculate reported outage hours within date range and hour filter:
+        df = df.loc[
+            (df.loc[:,'CURTAILMENT START DATE TIME']<=chunk['shared_hour_filter'].loc[:,'END DATETIME'].max()) \
+            & (df.loc[:,'CURTAILMENT END DATE TIME']>=chunk['shared_hour_filter'].loc[:,'START DATETIME'].min()),
+            :
+        ]
 
-    # Calculate overlap between outage and demand hours:
-    df.loc[:,'APPLICABLE OUTAGE HOURS'] = df.apply(
-        lambda r:hour_filter_overlap(
-            r.loc['CURTAILMENT START DATE TIME'],
-            r.loc['CURTAILMENT END DATE TIME'],
-            chunk['shared_hour_filter']
-        ),
-        axis='columns',
-        result_type='expand'
-    )
+        # Calculate overlap between outage and demand hours:
+        df.loc[:,'APPLICABLE OUTAGE HOURS'] = df.apply(
+            lambda r:hour_filter_overlap(
+                r.loc['CURTAILMENT START DATE TIME'],
+                r.loc['CURTAILMENT END DATE TIME'],
+                chunk['shared_hour_filter']
+            ),
+            axis='columns',
+            result_type='expand'
+        )
 
-    # Calculate curtailed capacity * outage duration during demand in MWh
-    df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.loc[:,'CURTAILMENT MW'] \
-        * df.loc[:,'APPLICABLE OUTAGE HOURS']
+        # Calculate curtailed capacity * outage duration during demand in MWh
+        df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.loc[:,'CURTAILMENT MW'] \
+            * df.loc[:,'APPLICABLE OUTAGE HOURS']
 
-    # Aggregate by resource id and nature-of-work:
-    df = df.loc[:,[
-        'RESOURCE ID','NATURE OF WORK','OUTAGE MWH DURING DEMAND'
-    ]].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
-        'OUTAGE MWH DURING DEMAND': 'sum'
-    }).reset_index()
+        # Aggregate by resource id and nature-of-work:
+        df = df.loc[:,[
+            'RESOURCE ID','NATURE OF WORK','OUTAGE MWH DURING DEMAND'
+        ]].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
+            'OUTAGE MWH DURING DEMAND': 'sum'
+        }).reset_index()
+
+    else:
+        df = pd.DataFrame({
+            'RESOURCE ID' : [],
+            'NATURE OF WORK' : [],
+            'OUTAGE MWH DURING DEMAND' : []
+        })
+
 
     return df

@@ -48,6 +48,11 @@ def evaluate_ucap():
             df.loc[:,'YEAR'] = year
             df.loc[:,'SEASON'] = season_name
             df_out = pd.concat([df_out,df.loc[:,['YEAR','SEASON']+list(original_columns)]])
+    df_out = df_out.groupby(
+        ['RESOURCE ID','YEAR','SEASON','NATURE OF WORK']
+    ).agg({
+        'OUTAGE MWH DURING DEMAND' : 'sum'
+    }).reset_index()
 
     output_path = Path(replace_template_placeholders(
         config['ucap_analysis']['results']['outage_path_template'],

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime as dt
 
-sys.path=['M:\\Users\\RH2\\src\\ucap_evaluation'] + sys.path
+sys.path=[str(Path().cwd())] + sys.path
 from ezdb_connection.sql_strs import get_economic_bid
 from src.ezdb_connection.ezdb_connection import EZBDConnection
 

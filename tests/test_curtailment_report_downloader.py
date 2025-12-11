@@ -5,13 +5,13 @@ import unittest
 from pathlib import Path
 from datetime import datetime as dt, date as d, timedelta as td
 
-sys.path=['M:\\Users\\RH2\\src\\ucap_evaluation'] + sys.path
+sys.path=[str(Path().cwd())] + sys.path
 from src.curtailment_report_downloader.curtailment_report_downloader \
     import CurtailmentReportDownloader
 
 class TestCurtailmentReportDownloader(unittest.TestCase):
 
-    config_path = Path(r'M:\Users\RH2\src\ucap_evaluation\config\config.yaml')
+    config_path = Path(r'config\config.yaml')
 
     def __init__(self,*args,**kwargs):
         # Modifies the class initializer to incorporate configuration settings.

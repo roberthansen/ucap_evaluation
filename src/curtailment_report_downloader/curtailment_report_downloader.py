@@ -199,12 +199,12 @@ class CurtailmentReportDownloader:
         else:
             return pd.DataFrame(columns=['REPORT DATE']+self.column_names)
 
-    def dump_parquet(self):
+    def dump_parquet(self,curtailment_data):
         '''
-        Saves the current dataframe of curtailment reports to a parquet file at
+        Saves the input dataframe of curtailment reports to a parquet file at
         the path specified in the config dictionary
         '''
-        self.curtailment_data.to_parquet(self.combined_reports_path)
+        curtailment_data.to_parquet(self.combined_reports_path)
     
     def clear_parquet(self):
         '''
@@ -287,7 +287,7 @@ class CurtailmentReportDownloader:
             new_data.loc[:,['REPORT DATE']+list(columns)]
             df = pd.concat([df,new_data],ignore_index=True)
             self.logger.data.loc[self.logger.data.loc[:,'effective_date']==r.loc['effective_date'],'loaded_to_parquet'] = 1
-        df.to_parquet(self.combined_reports_path)
+        self.dump_parquet(df)
         self.logger.commit()
 
     def extract_all_reports(self,effective_dates:list=[]):
@@ -342,6 +342,10 @@ class CurtailmentReportDownloader:
             else:
                 pass
         return df
+    
+    def extract_reports_by_resource_id(self,resource_id:str):
+        df = self.load_parquet()
+        return df.loc[df.loc[:,'RESOURCE ID']==resource_id,:]
     
     def clear_all_downloads(self):
         '''
