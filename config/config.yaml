@@ -21,11 +21,11 @@ weather_data:
     weather_station_information: 'https://www.ncei.noaa.gov/pub/data/noaa/isd-history.txt'
     normalized_weather_inventory: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/doc/hly_inventory_30yr.txt'
     historic_data_template: 'https://www.ncei.noaa.gov/data/global-hourly/access/[year]/[file_id].csv'
-    normalized_weather_year_template: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/access/[country]W00[usaf].csv'
+    normalized_weather_year_template: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/access/[country]W[wban].csv'
   download_path_templates:
     historic_data: 'downloads\weather_data\[usaf]-[wban]\[usaf]-[wban]_[year].csv'
-    normalized_weather_year: 'downloads\weather_data\[usaf]-[wban]\[usaf][wban]_normalized.csv'
-  combined_reports_path_template: 'downloads\weather_data\[usaf]-[wban]\weather_data_[usaf]-[wban].parquet'
+    normalized_weather_year: 'downloads\weather_data\[usaf]-[wban]\[usaf]-[wban]_normalized.csv'
+  combined_reports_path_template: 'downloads\weather_data_[type].parquet'
   zone_shape_file: 'config\BuildingClimateZonesMap.kmz'
   download_log_path: 'logs\weather_data_download_log.csv'
   text_log_path: 'logs\weather_data_download_log.txt'
@@ -38,7 +38,7 @@ resource_information:
       - Planned
       - Retired
   caiso_eia_map:
-    path: 'config\caiso_eia_map_2025-12-10.csv'
+    path: 'config\caiso_eia_map_2025-12-17.csv'
   master_resource_database:
     path: 'config\MRD Final 2026_09182025 ver2.xlsx'
     worksheet_name: MRD
@@ -89,3 +89,8 @@ ucap_analysis:
     outage_path_template: 'results\eford_by_resource_and_NOW_AAH_[years].csv'
     # outage_path_template: 'results\efor_by_resource_and_NOW_AAH_[years].csv'
     demand_hours_path_template: 'results\demand_hours_by_resource_AAH_[years].csv'
+    ambient_derations_due_to_temperature:
+      resource_weather_station_pairs_path: 'results\ambient_due_to_temperature\resource_weather_station_pairs.csv'
+      deration_curve_parameters_path_template: 'results\ambient_due_to_temperature\deration_curve_parameters_[years].csv'
+      normalized_derations_path_template: 'results\ambient_due_to_temperature\normalized_derations_by_resource_[years].parquet'
+      normalized_eford_path_template: 'results\ambient_due_to_temperature\normalized_ambient_temperature_eford_by_resource_[years].csv'

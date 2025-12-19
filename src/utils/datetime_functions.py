@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pandas import DataFrame
+import numpy as np
 
 def datetime_range_overlap(tr0_0:datetime,tr0_1:datetime,tr1_0:datetime,tr1_1:datetime):
     '''
@@ -19,8 +20,12 @@ def datetime_range_overlap(tr0_0:datetime,tr0_1:datetime,tr1_0:datetime,tr1_1:da
             a floating point value representing the duration in hours of overlap
             between the two input datetime ranges.
     '''
-    overlap = max( min(tr0_1, tr1_1) - max(tr0_0, tr1_0), timedelta(hours=0))
-    return overlap.total_seconds() / 3600
+    overlap = min(tr0_1, tr1_1) - max(tr0_0, tr1_0)
+    if type(overlap)==np.timedelta64:
+        overlap_hours = max(overlap,np.timedelta64(0)) / np.timedelta64(1,'h')
+    else:
+        overlap_hours = max(overlap,timedelta(hours=0)).total_seconds() / 3600
+    return overlap_hours
 
 def hour_filter_overlap(tr_0:datetime,tr_1:datetime,hour_filter:DataFrame):
     '''

@@ -26,13 +26,15 @@ class WeatherDataDownloader:
             'usaf' : 'string',
             'wban' : 'string',
             'callsign' : 'string',
+            'type' : 'string',
+            'source_url' : 'string',
             'download_path' : 'string',
             'loaded_to_parquet' : 'int64',
         }
 
-        self.weather_data_dtypes = {
+        self.historic_weather_data_dtypes = {
             'STATION' : 'string',
-            'DATE' : 'datetime64[ms]',
+            'DATE' : 'datetime64[ns]',
             'SOURCE' : 'string',
             'LATITUDE' : 'float64',
             'LONGITUDE' : 'float64',
@@ -51,6 +53,45 @@ class WeatherDataDownloader:
             'MK1','MV1','MW1','OC1','OD1','OE1','OE2','OE3','RH1','RH2','RH3',
             'REM','EQD'
         ]}
+        normalized_metrics = [
+            'HLY-TEMP-NORMAL',
+            'HLY-TEMP-10PCTL',
+            'HLY-TEMP-90PCTL',
+            'HLY-DEWP-NORMAL',
+            'HLY-DEWP-10PCTL',
+            'HLY-DEWP-90PCTL',
+            'HLY-PRES-NORMAL',
+            'HLY-PRES-10PCTL',
+            'HLY-PRES-90PCTL',
+            'HLY-CLDH-NORMAL',
+            'HLY-HTDH-NORMAL',
+            'HLY-CLOD-PCTCLR',
+            'HLY-CLOD-PCTFEW',
+            'HLY-CLOD-PCTSCT',
+            'HLY-CLOD-PCTBKN',
+            'HLY-CLOD-PCTOVC',
+            'HLY-HIDX-NORMAL',
+            'HLY-WCHL-NORMAL',
+            'HLY-WIND-AVGSPD',
+            'HLY-WIND-PCTCLM',
+            'HLY-WIND-VCTDIR',
+            'HLY-WIND-VCTSPD',
+            'HLY-WIND-1STDIR',
+            'HLY-WIND-1STPCT',
+            'HLY-WIND-2NDDIR',
+            'HLY-WIND-2NDPCT'
+        ]
+        self.normalized_weather_data_dtypes = {
+            'STATION' : 'string',
+            'NAME' : 'string',
+            'LATITUDE' : 'float64',
+            'LONGITUDE' : 'float64',
+            'ELEVATION' : 'float64',
+            'DATE' : 'datetime64[ns]',
+            'month' : 'int64',
+            'day' : 'int64',
+            'hour' : 'int64'
+        } | {prefix+metric:dtype for metric in normalized_metrics for (prefix,dtype) in (('','float64'),('meas_flag_','string'),('comp_flag_','string'),('years_','int64'))}
 
         log_path = Path(config['weather_data']['download_log_path'])
 
@@ -59,7 +100,7 @@ class WeatherDataDownloader:
         self.historic_data_url_template = config['weather_data']['urls']['historic_data_template']
         self.normalized_weather_year_url_template = config['weather_data']['urls']['normalized_weather_year_template']
         self.historic_data_download_path_template = config['weather_data']['download_path_templates']['historic_data']
-        self.normalized_weather_year_download_path = config['weather_data']['download_path_templates']['normalized_weather_year']
+        self.normalized_weather_year_download_path_template = config['weather_data']['download_path_templates']['normalized_weather_year']
         self.combined_reports_path_template = config['weather_data']['combined_reports_path_template']
         self.years = config['ucap_analysis']['years']
         self.logger = DataLogger(dtypes=log_dtypes,log_path=log_path,delimiter=',')
@@ -107,8 +148,8 @@ class WeatherDataDownloader:
         url = replace_template_placeholders(
             self.normalized_weather_year_url_template,
             {
-                'country' : 'USW',
-                'usaf' : ('0000000'+usaf)[8]
+                'country' : 'US',
+                'wban' : ('0000000'+wban)[-8:]
             }
         )
         return url
@@ -257,7 +298,6 @@ class WeatherDataDownloader:
         ws_lat = normalized_weather_inventory.iloc[0]['LAT']
         ws_lon = normalized_weather_inventory.iloc[0]['LON']
 
-        print(f'Minimum Distance from {lat:0.3f}, {lon:0.3f} to Weather Station: {min_distance} km ({wban}-{usaf} {ws_lat:0.3f}, {ws_lon:0.3f})')
         if wban in list(weather_station_information['WBAN']):
             weather_station = weather_station_information.loc[
                 weather_station_information['WBAN']==wban,
@@ -289,6 +329,28 @@ class WeatherDataDownloader:
                     'usaf' : usaf,
                     'wban' : wban,
                     'year' : str(year)
+                }
+            )
+        )
+
+    def get_normalized_weather_year_download_path(self,usaf:str,wban:str):
+        '''
+        Defines a default path for normalized weather year files based on the
+        weather station of its contents.
+
+        Parameters:
+            usaf - a 6-digit US Air Force station ID as specified in the
+                isd-history.txt file on the NCEI/NOAA website.
+            wban - a 5-digit NCDC WBAN number as specified in the
+                isd-history.txt file on the NCEI/NOAA website.
+            year - a current or past year expressed as an integer.
+        '''
+        return Path(
+            replace_template_placeholders(
+                self.normalized_weather_year_download_path_template,
+                {
+                    'usaf' : usaf,
+                    'wban' : wban,
                 }
             )
         )
@@ -360,9 +422,10 @@ class WeatherDataDownloader:
         url = self.get_historic_data_url(usaf,wban,year)
         download_path = self.get_historic_data_download_path(usaf,wban,year)
         if (
-            (dt(year,1,1)==self.logger.data.loc[:,'effective_date']) & \
-            (usaf==self.logger.data.loc[:,'usaf']) & \
-            (wban==self.logger.data.loc[:,'wban'])
+            (self.logger.data['effective_date']==year) & \
+            (self.logger.data['type']=='historic') & \
+            (self.logger.data['usaf']==usaf) & \
+            (self.logger.data['wban']==wban)
         ).any() and not overwrite:
             filename = download_path.name
             self.status_logger.log(f'Skipping file already downloaded: {filename}','INFORMATION')
@@ -380,6 +443,8 @@ class WeatherDataDownloader:
                         'usaf': usaf,
                         'wban' : wban,
                         'callsign' : callsign,
+                        'type' : 'historic',
+                        'source_url' : url,
                         'download_path' : str(download_path),
                         'loaded_to_parquet' : 0,
                     }))
@@ -387,8 +452,64 @@ class WeatherDataDownloader:
                     self.status_logger.log(f'Downloaded {download_path}','INFORMATION')
             except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError):
                 self.status_logger.log('Specified File Not Available at Given URL','ERROR')
-    
-    def get_weather_data(self,usaf:str,wban:str,year:int):
+
+    def download_normalized_weather_data(self,usaf:str,wban:str,overwrite:bool=False):
+        '''
+        Downloads and saves a normalized weather year data file from the NCEI/
+        NOAA based on the input file_id, consisting of the 6-digit USAF and 5-
+        digit WBAN numbers. When requesting weather data for the current year, only a partial year of data is retrieved.
+
+        Parameters:
+            usaf - a weather station's 6-digit US Air Force station ID
+                as specified in the isd-history.txt file on the NCEI/NOAA
+                website
+            wban - a weather station's 5-digit NCDC WBAN number as specified in
+                the isd-history.txt file on the NCEI/NOAA website
+            overwrite - a boolean value indicating whether files already
+                downloaded should be overwritten. Default value is True.
+        '''
+        usaf = ('000000' + usaf)[-6:]
+        wban = ('00000' + wban)[-5:]
+        weather_station_information = self.get_weather_station_information()
+        callsign = weather_station_information.loc[
+            (weather_station_information['USAF']==usaf) & \
+            (weather_station_information['WBAN']==wban),
+            'CALL'
+        ].iloc[0]
+        url = self.get_normalized_weather_year_url(usaf,wban)
+        download_path = self.get_normalized_weather_year_download_path(usaf,wban)
+        if (
+            (self.logger.data['type']=='normalized') & \
+            (self.logger.data['usaf']==usaf) & \
+            (self.logger.data['wban']==wban)
+        ).any() and not overwrite:
+            filename = download_path.name
+            self.status_logger.log(f'Skipping file already downloaded: {filename}','INFORMATION')
+        else:
+            try:
+                download_path.parent.mkdir(parents=True,exist_ok=True)
+                with download_path.open('wb') as f:
+                    c = pycurl.Curl()
+                    c.setopt(c.URL,url)
+                    c.setopt(c.WRITEDATA,f)
+                    c.perform()
+                    c.close()
+                    self.logger.log(pd.Series({
+                        'effective_date' : dt(1900,1,1),
+                        'usaf': usaf,
+                        'wban' : wban,
+                        'callsign' : callsign,
+                        'type' : 'normalized',
+                        'source_url' : url,
+                        'download_path' : str(download_path),
+                        'loaded_to_parquet' : 0,
+                    }))
+                    self.logger.commit()
+                    self.status_logger.log(f'Downloaded {download_path}','INFORMATION')
+            except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError):
+                self.status_logger.log('Specified File Not Available at Given URL','ERROR')
+
+    def get_historic_weather_data(self,usaf:str,wban:str,year:int):
         '''
         Returns a dataframe with data from the input weather station for the
         requested year, first downloading from the NCEI/NOAA website if not
@@ -403,39 +524,47 @@ class WeatherDataDownloader:
             year - a Pandas timestamp with a current or past year for which
                 weather data is requested.
         '''
+        # Create station id from usaf and wban:
+        station_id = ('00000' + usaf)[-6:] + ('0000' + wban)[-5:]
+
         # Check whether file should exist:
         weather_station_information = self.get_weather_station_information()
         weather_station = weather_station_information.loc[
-            (weather_station_information.loc[:,'USAF']==usaf) & \
-            (weather_station_information.loc[:,'WBAN']) & \
-            (weather_station_information.loc[:,'BEGIN']<=dt(year,1,1)) & \
-            (weather_station_information.loc[:,'END']>=dt(year,1,1)),
+            (weather_station_information['USAF']==usaf) &
+            (weather_station_information['WBAN']) &
+            (weather_station_information['BEGIN']<=dt(year,1,1)) &
+            (weather_station_information['END']>=dt(year,1,1)),
             :
         ]
-        if weather_station.index.count()>0:
+        if len(weather_station.index)>0:
             # Check whether file has been downloaded
-            if self.logger.data.loc[
-                (self.logger.data.loc[:,'usaf']==usaf) & \
-                (self.logger.data.loc[:,'wban']==wban) & \
-                (self.logger.data.loc[:,'year']==year),
+            if len(self.logger.data.loc[
+                (self.logger.data['usaf']==usaf) &
+                (self.logger.data['wban']==wban) &
+                (self.logger.data['type']=='historic') &
+                (self.logger.data['effective_date']==dt(year,1,1)),
                 :
-            ].count()>0:
+            ].index)>0:
                 # Check whether downloaded file has been loaded into parquet:
-                while not self.logger.data.loc[
-                    (self.logger.data.loc[:,'usaf']==usaf) & \
-                    (self.logger.data.loc[:,'wban']==wban) & \
-                    (self.logger.data.loc[:,'year']==year),
+                if self.logger.data.loc[
+                    (self.logger.data['usaf']==usaf) &
+                    (self.logger.data['wban']==wban) &
+                    (self.logger.data['type']=='historic') &
+                    (self.logger.data['effective_date']==dt(year,1,1)),
                     'loaded_to_parquet'
-                ]:
+                ].iloc[0]==0:
                     self.update_parquet()
             else:
                 # If file has not been downloaded, download then load to parquet:
                 self.download_historic_weather_data(usaf,wban,year)
-                self.update_parquet()
+                self.update_parquets()
 
             # Load data from parquet and filter for requested data:
-            df = self.load_parquet()
-            df = df.loc[(df.loc[:,'usaf']==usaf)&(df.loc[:,'wban'])&(df.loc['year']==year)]
+            df = self.load_parquet('historic')
+            df = df.loc[
+                (df['STATION']==station_id) &
+                (df['DATE'].dt.year==year)
+            ]
         else:
             # Weather station not found or unavailable or requested year:
             self.status_logger.log('Weather data unavailable',criticality='INFORMATION')
@@ -443,6 +572,60 @@ class WeatherDataDownloader:
 
         return df
 
+    def get_normalized_weather_data(self,usaf:str,wban:str):
+        '''
+        Returns a dataframe with normalized weather data from the input weather
+        station, first downloading from the NCEI/NOAA website if not already
+        available.
+
+        Parameters:
+            usaf - a weather station's 6-digit US Air Force station ID
+                as specified in the isd-history.txt file on the NCEI/NOAA
+                website
+            wban - a weather station's 5-digit NCDC WBAN number as specified in
+                the isd-history.txt file on the NCEI/NOAA website
+        '''
+        # Check whether file should exist:
+        weather_station_information = self.get_normalized_weather_inventory()
+
+        # Generate station id based on input WBAN:
+        station_id = 'USW' + ('000000' + wban)[-8:]
+
+        weather_station = weather_station_information.loc[
+            (weather_station_information.loc[:,'ID']==station_id),
+            :
+        ]
+        if len(weather_station.index)>0:
+            # Check whether file has been downloaded
+            if len(self.logger.data.loc[
+                (self.logger.data['wban']==wban) &
+                (self.logger.data['type']=='normalized'),
+                :
+            ].index)>0:
+                # Check whether downloaded file has been loaded into parquet:
+                if not self.logger.data.loc[
+                    (self.logger.data['wban']==wban) &
+                    (self.logger.data['type']=='normalized'),
+                    'loaded_to_parquet'
+                ].iloc[0]:
+                    self.update_parquet()
+            else:
+                # If file has not been downloaded, download then load to parquet:
+                self.download_normalized_weather_data(usaf,wban)
+                self.update_parquets()
+
+            # Load data from parquet and filter for requested data:
+            df = self.load_parquet('normalized')
+            df = df.loc[
+                (df['STATION']==station_id),
+                :
+            ]
+        else:
+            # Weather station not found or unavailable or requested year:
+            self.status_logger.log('Weather data unavailable',criticality='INFORMATION')
+            df = pd.DataFrame()
+
+        return df
 
     def download_all_files(self,overwrite:bool=False):
         '''
@@ -484,7 +667,7 @@ class WeatherDataDownloader:
         download_path = Path(download_record.loc['download_path'])
         self.status_logger.log(f'Removing Weather Data: {usaf}-{wban} {year}')
         download_path.unlink()
-        df = self.load_parquet()
+        df = self.load_parquet(type)
         df.drop(
             index=df.loc[
                 (df.loc[:,'STATION']==usaf+wban)&
@@ -505,7 +688,7 @@ class WeatherDataDownloader:
         )
         self.logger.commit()
 
-    def read_weather_file(self,usaf:str,wban:str,year:int):
+    def read_historic_weather_file(self,usaf:str,wban:str,year:int):
         '''
         Reads the weather data file for the input weather station and year,
         first downloading the file if unavailable.
@@ -526,15 +709,19 @@ class WeatherDataDownloader:
         if not download_path.is_file():
             self.download_historic_weather_data(usaf,wban,year,download_path)
         df = pd.read_csv(download_path)
-        for k,v in self.weather_data_dtypes.items():
+        for k,v in self.historic_weather_data_dtypes.items():
             if k in df.columns:
                 df.loc[:,k] = df.loc[:,k].astype(v)
-        return df
+        df['DATE'] = df['DATE'].dt.tz_localize('UTC').dt.tz_convert('Etc/GMT+8')
+        df['TEMPERATURE DEGC'] = df['TMP'].map(lambda s:float(s.split(',')[0])/10)
+        df['TEMPERATURE QC'] = df['TMP'].map(lambda s:s.split(',')[1])
+        df['TYPE'] = 'historic'
+        return df[['STATION','DATE','LATITUDE','LONGITUDE','ELEVATION','TYPE','TEMPERATURE DEGC','TEMPERATURE QC']]
 
-    def load_parquet(self,usaf:str,wban:str):
+    def read_normalized_weather_file(self,usaf:str,wban:str):
         '''
-        Loads weather data from a saved parquet file to reduce time reading from
-        .csv files
+        Reads the normalized weather data file for the input weather station,
+        first downloading the file if unavailable.
 
         Parameters:
             usaf - a weather station's 6-digit US Air Force station ID
@@ -542,63 +729,58 @@ class WeatherDataDownloader:
                 website
             wban - a weather station's 5-digit NCDC WBAN number as specified in
                 the isd-history.txt file on the NCEI/NOAA website
+        
+        Returns:
+            DataFrame containing the normalized weather year contained in the
+            file corresponding to the input weather station.
+        '''
+        download_path = self.get_normalized_weather_year_download_path(usaf,wban)
+        if not download_path.is_file():
+            self.download_normalized_weather_data(usaf,wban,download_path)
+        df = pd.read_csv(download_path)
+        df['DATE'] = df['DATE'].map(lambda s: dt(1900,int(s[0:2]),int(s[3:5]),int(s[6:8])))
+        df['DATE'].dt.tz_localize('Etc/GMT+8')
+        for k,v in self.normalized_weather_data_dtypes.items():
+            if k in df.columns:
+                df.loc[:,k] = df.loc[:,k].astype(v)
+        df['TEMPERATURE DEGC'] = (df['HLY-TEMP-NORMAL'] - 32 ) * 5 / 9
+        df['TEMPERATURE QC'] = df['comp_flag_HLY-TEMP-NORMAL']
+        df['TYPE'] = 'normalized'
+        return df[['STATION','DATE','LATITUDE','LONGITUDE','ELEVATION','TYPE','TEMPERATURE DEGC','TEMPERATURE QC']]
+
+    def load_parquet(self,type:str):
+        '''
+        Loads weather data from a saved parquet file to reduce time reading from
+        .csv files
+
+        Parameters:
+            type - either 'normalized' or 'historic'
         '''
         combined_reports_path = Path(replace_template_placeholders(
             self.combined_reports_path_template,
-            {
-                'usaf' : usaf,
-                'wban' : wban
-            }
+            {'type' : type}
         ))
         if combined_reports_path.is_file():
             return pd.read_parquet(combined_reports_path)
         else:
-            return pd.DataFrame(columns=self.weather_data_dtypes.keys())
-
-    def load_year(self,year:int):
-        '''
-        Loads all available weather data for the input year across multiple
-        parquet files.
-
-        Parameters:
-            year - a current or previous year for which data should be read
-        '''
-        weather_stations = self.logger.data.loc[
-            (self.logger.data.loc[:,'effective_date']==year),
-            ['usaf','wban']
-        ]
-        weather_data = pd.DataFrame(columns=self.weather_data_dtypes.keys())
-        for _,weather_station in weather_stations:
-            usaf = weather_station.loc['usaf']
-            wban = weather_station.loc['wban']
-            df = self.load_parquet(usaf,wban)
-            weather_data = pd.concat([
-                weather_data,
-                df.loc[(df.loc[:,'DATE'].map(lambda x:x.year)==year),:]
-            ])
-        return weather_data
+            return pd.DataFrame(columns=['STATION','DATE','LATITUDE','LONGITUDE','ELEVATION','TYPE','TEMPERATURE DEGC','TEMPERATURE QC'])
 
     def dump_parquets(self,weather_data):
         '''
         Saves the input dataframe of weather data to a parquet file at
         the path specified in the config dictionary
+
+        Parameters:
+            weather_data - a Pandas dataframe containing either normalized or
+                historic weather data to be appended to the parquet file
+            type - either 'normalized' or 'historic'
         '''
-        station_ids = weather_data['STATION'].unique()
-        for station_id in station_ids:
-            usaf = station_id[0:6]
-            wban = station_id[6:]
-            weather_station_data = weather_data.loc[
-                (weather_data.loc[:,'STATION']==station_id),
-                :
-            ]
+        for type in list(weather_data['TYPE'].unique()):
             combined_reports_path = replace_template_placeholders(
                 self.combined_reports_path_template,
-                {
-                    'usaf' : usaf,
-                    'wban' : wban
-                }
+                {'type' : type}
             )
-            weather_station_data.to_parquet(combined_reports_path)
+            weather_data.to_parquet(combined_reports_path)
 
     def clear_parquets(self):
         '''
@@ -608,19 +790,14 @@ class WeatherDataDownloader:
         '''
         years = self.logger.data.loc[:,'effective_date'].map(lambda x:x.year).unique()
         weather_stations = self.logger.data.loc[:,['usaf','wban']].drop_duplicates()
-        for _,weather_station in weather_stations.iterrows():
-            usaf = weather_station.loc['usaf']
-            wban = weather_station.loc['wban']
+        for type in ('normalized','historic'):
             combined_reports_path = Path(replace_template_placeholders(
                 self.combined_reports_path_template,
-                {
-                    'usaf' : usaf,
-                    'wban' : wban
-                }
+                {'type' : type}
             ))
             combined_reports_path.unlink()
             self.logger.data.loc[
-                (self.logger.data.loc[:,''].map(lambda x:x.year)==year),
+                (self.logger.data['type']==type),
                 'loaded_to_parquet'
             ] = 0
         self.logger.commit()
@@ -632,23 +809,24 @@ class WeatherDataDownloader:
         DataFrame to the parquet file.
         '''
         unloaded_reports = self.logger.data.loc[(self.logger.data.loc[:,'loaded_to_parquet']==0),:]
-        weather_stations = unloaded_reports.loc[:,['usaf','wban']].drop_duplicates()
-        for _,weather_station in weather_stations.iterrows():
-            usaf = weather_station.loc['usaf']
-            wban = weather_station.loc['wban']
-            df = self.load_parquet(usaf,wban)
-            years = unloaded_reports.loc[
-                (unloaded_reports.loc[:,'usaf']==usaf) &
-                (unloaded_reports.loc[:,'wban']==wban),
-                'effective_date'
-            ].map(lambda x:x.year).unique()
-            for year in years:
-                effective_date = dt(year,1,1)
-                new_data = self.read_weather_file(usaf,wban,year)
-                df = pd.concat([df,new_data],ignore_index=True)
-                self.logger.data.loc[
-                    self.logger.data.loc[:,'effective_date']==effective_date,
-                    'loaded_to_parquet'
-                ] = 1
+        weather_stations = unloaded_reports[['usaf','wban']].drop_duplicates()
+        for _,unloaded_report in unloaded_reports.iterrows():
+            usaf = unloaded_report['usaf']
+            wban = unloaded_report['wban']
+            type = unloaded_report['type']
+            effective_date = unloaded_report['effective_date']
+            df = self.load_parquet(type)
+            if type=='historic':
+                new_data = self.read_historic_weather_file(usaf,wban,effective_date.year)
+            elif type=='normalized':
+                new_data = self.read_normalized_weather_file(usaf,wban)
+            df = pd.concat([df,new_data],ignore_index=True)
+            self.logger.data.loc[
+                (self.logger.data['usaf']==usaf) &
+                (self.logger.data['wban']==wban) &
+                (self.logger.data['type']==type) &
+                (self.logger.data['effective_date']==effective_date),
+                'loaded_to_parquet'
+            ]=1
             self.dump_parquets(df)
         self.logger.commit()

@@ -149,7 +149,7 @@ class DataLogger:
             data - a pandas series containing data to include in the log
         '''
         data['log_timestamp'] = ts.now()
-        self.data = self.data.append(data,ignore_index=True)
+        self.data = pd.concat([self.data,data.to_frame().T],axis='index',ignore_index=True)
     def load_log(self):
         '''
         checks the log file against the current list of columns and either
