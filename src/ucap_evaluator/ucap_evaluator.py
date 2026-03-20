@@ -1,385 +1,646 @@
-import pandas as pd
+import random
 import numpy as np
+import pandas as pd
 import multiprocessing as mp
 from pathlib import Path
-from datetime import date as d,time as t,datetime as dt,timedelta as td
+from datetime import datetime as dt,timedelta as td
+
 from src.logging.logging import TextLogger
-from src.utils.datetime_functions import datetime_range_overlap,hour_filter_overlap,select_hours_within_datetime_range,coalesce_hour_filter
-from src.utils.prepare_curtailment_data import prepare_curtailment_data
+from src.utils.string_functions import replace_template_placeholders
 
 class UCAPEvaluator:
     '''
-    A class to manage analysis of curtailment data to evaluate UCAP values for
-    individual resources.
+    A class to calculate unforced capacities for applicable resources based on
+    Equivalent Forced Outage Rates during Demand hours (EFORd) calculated using
+    outages and curtailments with nature-of-work codes specified in the
+    config.yaml file, and weather-normalized EFORd values for derations due to
+    ambient temperatures. Additional settings in the config.yaml file are as
+    follows:
+        ucap_analysis.historic_evaluation_period - Specifies the integer number
+            of complete calendar years of historic outage and weather data to
+            use when evaluating UCAP
+        ucap_analysis.year_exclusion_count - Specifies the integer number of
+            years of historic outages to exclude when evaluating EFORd based
+            based on all natures-of-work except derations due to ambient
+            temperatures
+        ucap_analysis.excluded_natures_of_work - Specifies which nature-of-work
+            codes to ignore when evaluating UCAP
+        ucap_analysis.seasons - Defines seasons for the purpose of calculating
+            and applying UCAP values for individual resources
+        ucap_analysis.resource_types.ucap_eligible - Specifies the set of
+            resource types, as defined in the Master Resource Database, for
+            which UCAP values should be calculated and applied
+        ucap_analysis.resource_types.weather_normalization - Specifies the set
+            of resource types for which derations due to ambient temperatures
+            are to be weather-normalized
+
+
+    This class replicates the functionality of the UCAP evaluation Excel
+    workbook.
     '''
+
     def __init__(self,config:dict):
-        self.combined_reports_path = Path(config['caiso_curtailment_reports']['combined_reports_path'])
         self.status_logger = TextLogger(
             cli_logging_criticalities=['INFORMATION','WARNING','ERROR'],
             file_logging_criticalities=['WARNING','ERROR'],
             log_path=config['ucap_analysis']['text_log_path']
         )
-        self.curtailment_data = pd.read_parquet(self.combined_reports_path)
-        self.natures_of_work = config['ucap_analysis']['natures_of_work']
-        self.grid_hour_filter = pd.read_csv(config['ucap_analysis']['hour_filter_path'],parse_dates=[0,1])
-        # self.resource_hour_filter = pd.read_parquet(config['demand_hours_analysis']['resource_demand_hours_path'])
+        self.master_resource_database_path = Path(config['resource_information']['master_resource_database']['path'])
+        self.master_resource_database_worksheet_name = config['resource_information']['master_resource_database']['worksheet_name']
+        self.caiso_master_capability_list_worksheet_name = config['resource_information']['master_resource_database']['caiso_master_capability_list_worksheet_name']
+        self.excluded_natures_of_work = config['ucap_analysis']['excluded_natures_of_work']
+        self.seasons = config['ucap_analysis']['seasons']
+        self.ucap_resource_types = config['ucap_analysis']['resource_types']['ucap_eligible']
+        self.weather_normalized_resource_types = config['ucap_analysis']['resource_types']['weather_normalization']
+        self.outage_rates_path_template = config['ucap_analysis']['results']['outage_rates_path_template']
+        self.normalized_deration_rates_path_template = config['ucap_analysis']['results']['ambient_derations_due_to_temperature']['normalized_deration_rates_path_template']
+        self.years = config['ucap_analysis']['years']
+        self.seasons = config['ucap_analysis']['seasons']
+        self.year_exclusion_count = config['ucap_analysis']['year_exclusion_count']
+        self.hour_filter_path = Path(config['ucap_analysis']['hour_filter_path'])
 
-        master_resource_database_path = Path(config['resource_information']['master_resource_database']['path'])
-        master_capability_list_worksheet_name = config['resource_information']['master_resource_database']['caiso_master_capability_list_worksheet_name']
-        self.master_capability_list = pd.read_excel(master_resource_database_path,master_capability_list_worksheet_name)
+        self.demand_hours = pd.DataFrame()
+        self.master_resource_database = pd.DataFrame()
+        self.caiso_master_capability_list = pd.DataFrame()
+        self.outage_rates = pd.DataFrame()
+        self.normalized_deration_rates = pd.DataFrame()
 
+        self.ucap_by_resource_season_path_template = config['ucap_analysis']['results']['ucap_by_resource_season_path_template']
+        self.ucap_by_resource_type_season_path_template = config['ucap_analysis']['results']['ucap_by_resource_type_season_path_template']
 
+        self.mp_processes_count = config['multiprocessing']['processes_count']
 
-    def calculate_equivalent_forced_outage_rates_by_date_range(self,start_date:d,end_date:d):
+    def get_outage_rates(self):
         '''
-        Filters curtailment data for the input range of dates, then evaluates
-        the equivalent forced outage rate (EFOR) for the month based on curtailment
-        data given the nature-of-work codes included in the configuration file.
+        Reads the .csv file containing evaluated EFORd values and loads the
+        contents into a dataframe for further analysis.
 
-            parameters:
-                start_date - a datetime.date object specifying the initial date
-                    of a range of dates across which to evaluate the EFOR for
-                    each resource in the curtailment data
-                end_date - a datetime.date object specifying the final date of a
-                    range of dates across which to evaluate the EFOR for each
-                    resource in the curtailment data
+            Returns: a copy of the EFORd dataframe
+            Side Effects: stores a copy of the EFORd dataframe to the
+                outage_rates object parameter
         '''
-        start_date_str = start_date.strftime('%Y-%m-%d')
-        end_date_str = end_date.strftime('%Y-%m-%d')
-        self.status_logger.log(f'Calculating EFOR Within Date Range {start_date_str} to {end_date_str}.',criticality='INFORMATION')
+        if self.outage_rates.empty:
+            outage_rates_path = Path(replace_template_placeholders(self.outage_rates_path_template,{'years' : f'{self.years[0]}-{self.years[-1]}'}))
 
-        # Get prepared curtailment data:
-        df = prepare_curtailment_data(self.curtailment_data)
+            df = pd.read_csv(outage_rates_path)
 
-        # Filter curtailment data for reports containing dates within input
-        # range:
-        self.status_logger.log('\tFiltering curtailment reports.',criticality='INFORMATION')
-        df.loc[:,'INCLUDE'] = df.apply(
-            lambda r: \
-            (r.loc['CURTAILMENT START DATE TIME']<dt.combine(end_date,t(0,0,0))+td(days=1)) \
-            and (r.loc['CURTAILMENT END DATE TIME']>=dt.combine(start_date,t(0,0,0))),
-            axis='columns',
-            result_type='expand'
-        )
-        df = df.loc[df.loc[:,'INCLUDE'],:]
+            df['RESOURCE ID'] = df['RESOURCE ID'].map(lambda s:s.replace(' ','_'))
 
-        # Filter curtailment data for forced outages and nature-of-work codes
-        # listed in the configuration file:
-        df = df.loc[(df.loc[:,'OUTAGE TYPE']=='FORCED'),:]
-        if self.natures_of_work is not None:
-            df.loc[:,'INCLUDE'] = df.apply(
-                lambda r: r.loc['NATURE OF WORK'] in self.natures_of_work,
-                axis='columns',
-                result_type='expand'
-            )
-            df = df.loc[df.loc[:,'INCLUDE'],:]
-
-        # Get most recent curtailment report for each MRID:
-        current_reports = df.loc[:,[
-            'OUTAGE MRID',
-            'REPORT DATE'
-        ]].groupby('OUTAGE MRID').max().reset_index().apply(
-            lambda r:(r.loc['OUTAGE MRID'],r.loc['REPORT DATE']),
-            axis='columns',
-            result_type='reduce'
-        )
-        df = df.set_index(['OUTAGE MRID','REPORT DATE']).loc[current_reports,:].reset_index()
-
-        # Calculate reported outage hours within date range and selected nature-
-        # of-work codes:
-        self.status_logger.log('\tCalculating outage rates within date range.')
-        df = df.loc[
-            (df.loc[:,'CURTAILMENT START DATE TIME']<=dt.combine(end_date,t(0,0,0))+td(days=1)) \
-            * (df.loc[:,'CURTAILMENT END DATE TIME']>=dt.combine(start_date,t(0,0,0)))
-        ]
-        df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.apply(
-            lambda r:datetime_range_overlap(
-                r.loc['CURTAILMENT START DATE TIME'],
-                r.loc['CURTAILMENT END DATE TIME'],
-                dt.combine(start_date,t(0,0,0)),
-                dt.combine(end_date,t(0,0,0)) + td(days=1)
-            ),
-            axis='columns',
-            result_type='expand'
-        )
-
-        # Calculate curtailed capacity * duration in MWh
-        df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.loc[:,'CURTAILMENT MW'] \
-            * df.loc[:,'APPLICABLE OUTAGE HOURS']
-
-        # Calculate maximum capacity * time range in MWh
-        df.loc[:,'APPLICABLE PMAX MWH'] = df.loc[:,'RESOURCE PMAX MW'] \
-            * (
-                dt.combine(end_date,t(0,0,0)) + td(days=1)
-                - dt.combine(start_date,t(0,0,0)) \
-            ).total_seconds() / 3600
-        
-        # Aggregate by resource id and nature-of-work:
-        df = df.loc[:,['RESOURCE ID','NATURE OF WORK','APPLICABLE PMAX MWH','OUTAGE MWH DURING DEMAND']].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
-            'APPLICABLE PMAX MWH': 'max',
-            'OUTAGE MWH DURING DEMAND': 'sum'
-        }).reset_index()
-
-        # Calculate forced outage rate for selected time range as outage MWh/
-        # maximum possible MWh:
-        df.loc[:,'EQUIVALENT FORCED OUTAGE RATE'] = df.loc[:,'OUTAGE MWH DURING DEMAND'] / df.loc[:,'APPLICABLE PMAX MWH']
-        return df
-    
-    def calculate_equivalent_forced_outage_rate_during_resource_demand_hours(self,resource_hour_filter:list):
-        '''
-        Filters curtailment data for the input range of dates, then evaluates
-        the forced outage rate for demand periods based on a set of resource-
-        level demand hours.
-
-            parameters:
-                hour_filter - a pandas dataframe with columns labeled
-                    'RESOURCE ID','DATETIME' and 'INCLUDE' indicating selected
-                    hours, generally expected to constitute a year of hours.
-            
-            returns:
-                a pandas dataframe with each resource id and corresponding
-                equivalent forced outage rate during the demand hours identified
-                in the input hour filter.
-        '''
-        self.status_logger.log('Calculating EFORd with Individual Resource Demand Period Blocks.',criticality='INFORMATION')
-
-        # Get prepared curtailment data:
-        df = prepare_curtailment_data(self.curtailment_data)
-
-        # Breakup resource_hour_filter into separate dataframes for each resource:
-        hour_filter_dict = {k:resource_hour_filter.loc[resource_hour_filter.loc[:,'RESOURCE ID']==k,['START DATETIME','END DATETIME','INCLUDE']] for k in hour_filter.loc[:,'RESOURCE ID'].unique()}
-
-        # Filter curtailment data for reports containing dates within input
-        # range:
-        def f(r):
-            resource_id = r.loc['RESOURCE ID']
-            hf = hour_filter_dict[resource_id]
-            start_datetime = hf.loc[:,'START DATETIME'].min().to_pydatetime()
-            end_datetime = hf.loc[:,'END DATETIME'].max().to_pydatetime()
-            return datetime_range_overlap(
-                start_datetime,
-                end_datetime,
-                r.loc['CURTAILMENT START DATE TIME'],
-                r.loc['CURTAILMENT END DATE TIME']
-            )>0
-        df.loc[:,'INCLUDE'] = df.apply(
-            f,
-            axis='columns',
-            result_type='expand'
-        )
-        df = df.loc[df.loc[:,'INCLUDE'],:]
-
-        # Filter curtailment data for forced outages and nature-of-work codes
-        # listed in the configuration file:
-        df = df.loc[(df.loc[:,'OUTAGE TYPE']=='FORCED'),:]
-        if self.natures_of_work is not None:
-            df.loc[:,'INCLUDE'] = df.apply(
-                lambda r: r.loc['NATURE OF WORK'] in self.natures_of_work,
-                axis='columns',
-                result_type='expand'
-            )
-            df = df.loc[df.loc[:,'INCLUDE'],:]
-
-        # Calculate reported outage hours within date range and hour filter:
-        df = df.loc[
-            (df.loc[:,'CURTAILMENT START DATE TIME']<=resource_hour_filter.loc[:,'END DATETIME'].max()) \
-            * (df.loc[:,'CURTAILMENT END DATE TIME']>=resource_hour_filter.loc[:,'START DATETIME'].min()),
-            :
-        ]
-        def f(r):
-            resource_id = r.loc['RESOURCE ID']
-            hf = hour_filter_dict[resource_id]
-            return hour_filter_overlap(
-                r.loc['CURTAILMENT START DATE TIME'],
-                r.loc['CURTAILMENT END DATE TIME'],
-                hf
-            )
-        df.loc[:,'APPLICABLE OUTAGE HOURS'] = df.apply(
-            f,
-            axis='columns',
-            result_type='expand'
-        )
-
-        # Calculate curtailed capacity * duration in MWh
-        self.status_logger.log('\tCalculating outage rates within hour filter.')
-        df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.loc[:,'CURTAILMENT MW'] \
-            * df.loc[:,'APPLICABLE OUTAGE HOURS']
-
-        # Calculate maximum capacity * time range in MWh
-        df.loc[:,'APPLICABLE PMAX MWH'] = df.loc[:,'RESOURCE PMAX MW'] \
-            * (
-                 hour_filter.loc[:,'END DATETIME'] \
-                - hour_filter.loc[:,'START DATETIME']
-            ).sum().total_seconds() / 3600
-        
-        # Aggregate by resource id and nature-of-work:
-        df = df.loc[:,['RESOURCE ID','NATURE OF WORK','APPLICABLE PMAX MWH','OUTAGE MWH DURING DEMAND']].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
-            'APPLICABLE PMAX MWH': 'max',
-            'OUTAGE MWH DURING DEMAND': 'sum'
-        }).reset_index()
-
-        # Calculate forced outage rate for selected time range as :
-        df.loc[:,'EQUIVALENT FORCED OUTAGE RATE DURING DEMAND'] = df.loc[:,'OUTAGE MWH DURING DEMAND'] / df.loc[:,'APPLICABLE PMAX MWH']
-        return df
-
-    def calculate_equivalent_forced_outage_rate_during_shared_demand_hours(
-        self,
-        shared_hour_filter:list,
-        curtailment_data:pd.DataFrame=pd.DataFrame()
-    ):
-        '''
-        Filters curtailment data for the input range of dates, then evaluates
-        the forced outage rate during demand periods based on a set of shared
-        demand hours specified in the input shared_hour_filter.
-
-            parameters:
-                shared_hour_filter - a pandas dataframe with columns labeled
-                    'DATETIME' and 'INCLUDE' indicating selected hours,
-                    generally expected to constitute a year of hours.
-                resource_types - a list containing each resource type to be
-                    included in the EFORd analysis; if empty (default), all
-                    resource types are included.
-                curtailment_data - a Pandas dataframe containing curtailment
-                    data to use in the EFORd analysis; if empty (default), the
-                    full set of historic curtailment data is used.
-            
-            returns:
-                a pandas dataframe with each resource id and corresponding
-                equivalent forced outage rate during the demand hours identified
-                in the input hour filter.
-        '''
-        block_count = len(shared_hour_filter)
-        self.status_logger.log(f'Calculating EFORd with {block_count} Demand Period Blocks.',criticality='INFORMATION')
-
-        # Get prepared curtailment data:
-        if curtailment_data.empty:
-            df = prepare_curtailment_data(self.curtailment_data)
-
-            # Remove any curtailment reports without an end date time:
-            df = df.loc[df.loc[:,'CURTAILMENT END DATE TIME'].notnull(),:]
+            self.status_logger.log('Loaded Outage Rates')
+            self.outage_rates = df.copy()
         else:
-            df = curtailment_data
-
-        # Filter curtailment data for reports containing dates within input
-        # range:
-        self.status_logger.log('\tFiltering curtailment reports.',criticality='INFORMATION')
-        start_datetime = shared_hour_filter.loc[:,'START DATETIME'].min().to_pydatetime()
-        end_datetime = shared_hour_filter.loc[:,'END DATETIME'].max().to_pydatetime()
-        
-        # Split curtailment data into smaller chunks for multiprocessing:
-        mp_chunks = [{
-            'df': x,
-            'start_datetime': start_datetime,
-            'end_datetime': end_datetime,
-            'natures_of_work': self.natures_of_work,
-            'master_capability_list' : self.master_capability_list.loc[:,['RESOURCE_ID','COD']],
-            'shared_hour_filter' : shared_hour_filter
-        } for x in np.array_split(df,32)]
-
-        # Run multiprocessing helper function on each chunk in parallel:
-        with mp.Pool(processes=8) as mp_pool:
-            df = pd.concat(mp_pool.map(multiprocessing_helper_function,mp_chunks))
-
-        # Aggregate across multiprocessing chunks:
-        df = df.loc[:,[
-            'RESOURCE ID','NATURE OF WORK','OUTAGE MWH DURING DEMAND'
-        ]].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
-            'OUTAGE MWH DURING DEMAND': 'sum'
-        }).reset_index()
-
-        df.sort_values(by=['RESOURCE ID','NATURE OF WORK'],inplace=True)
+            df = self.outage_rates.copy()
 
         return df
 
-### Multiprocessing Helper Functions: ###
-def multiprocessing_helper_function(chunk):
-    '''
-    A helper function to be called by a multiprocessing object's map() method,
-    along with chunked data passed individually as the chunk input.
-    '''
+    def get_normalized_deration_rates(self):
+        '''
+        Reads the .csv file containing evaluated weather-normalized EFORd values
+        based on ambient derations due to temperature and loads the contents
+        into a dataframe for further analysis.
 
-    # Filter curtailment data for reports within date range of the demand hours:
+            Returns: a copy of the weather-normalized EFORd dataframe
+            Side Effects: stores a copy of the weather-normalized EFORd
+                dataframe to the outage_rates object parameter
+        '''
+
+        if self.normalized_deration_rates.empty:
+            normalized_deration_rates_path = Path(replace_template_placeholders(self.normalized_deration_rates_path_template,{'years' : f'{self.years[0]}-{self.years[-1]}'}))
+            df = pd.read_csv(normalized_deration_rates_path)
+            df['RESOURCE ID'] = df['RESOURCE ID'].map(lambda s:s.replace(' ','_'))
+
+            self.status_logger.log('Loaded Weather-Normalized Deration Rates due to Ambient Temperatures','INFORMATION')
+            self.normalized_deration_rates = df.copy()
+        else:
+            df = self.normalized_deration_rates.copy()
+
+        return df
+
+    def get_master_resource_database(self):
+        if self.master_resource_database.empty:
+            df = pd.read_excel(self.master_resource_database_path,self.master_resource_database_worksheet_name)
+            df['Resource ID'] = df['Resource ID'].map(lambda s:s.replace(' ','_'))
+
+            self.status_logger.log('Loaded Master Resource Database from Excel file','INFORMATION')
+            self.master_resource_database = df.copy()
+        else:
+            df = self.master_resource_database.copy()
+        return df
+
+    def get_caiso_master_capability_list(self):
+        if self.caiso_master_capability_list.empty:
+            df = pd.read_excel(self.master_resource_database_path,self.caiso_master_capability_list_worksheet_name)
+            df['RESOURCE_ID'] = df['RESOURCE_ID'].map(lambda s:s.replace(' ','_'))
+
+            df['COD'] = df['COD'].map(lambda x:dt.fromordinal(x+42137) if type(x)==int else x)
+
+            self.status_logger.log('Loaded CAISO Master Capability List from Excel file','INFORMATION')
+            self.caiso_master_capability_list = df.copy()
+        else:
+            df = self.caiso_master_capability_list.copy()
+        return df
+
+    def get_demand_hours(self):
+        if self.demand_hours.empty:
+            df = pd.read_csv(self.hour_filter_path)
+            df['START DATETIME'] = df['START DATETIME'].astype('datetime64')
+            df['END DATETIME'] = df['END DATETIME'].astype('datetime64')
+            df['SEASON'] = df['SEASON'].astype('string')
+            self.status_logger.log('Loaded Demand Hours from CSV','INFORMATION')
+            self.demand_hours = df.copy()
+        else:
+            df = self.demand_hours.copy()
+        return df
+
+    def get_season(self,t:dt):
+        seasons = {
+            k:[[dt.strptime(x[0]+' '+str(t.year),r'%b %d %Y'),dt.strptime(x[1]+' '+str(t.year),r'%b %d %Y')] for x in v]
+            for k,v in self.seasons.items()
+        }
+        for season_name,date_ranges in self.seasons.items():
+            for date_range in date_ranges:
+                start_date = dt.strptime(date_range[0]+' '+str(t.year),r'%b %d %Y')
+                end_date = dt.strptime(date_range[1]+' '+str(t.year),r'%b %d %Y')+td(days=1)
+                if t>=start_date and t<end_date:
+                    return season_name
+                else:
+                    pass
+        return None
+
+    def evaluate_ucap(self):
+        '''
+        Calculates individual UCAP values for each applicable resource.
+        '''
+
+        # Determine save paths:
+        ucap_by_resource_season_path = replace_template_placeholders(self.ucap_by_resource_season_path_template,{'years' : f'{self.years[0]}-{self.years[-1]}'})
+        ucap_by_resource_type_season_path = replace_template_placeholders(self.ucap_by_resource_type_season_path_template,{'years' : f'{self.years[0]}-{self.years[-1]}'})
+
+        # Load data from files:
+        master_resource_database = self.get_master_resource_database()
+        caiso_master_capability_list = self.get_caiso_master_capability_list()
+        outage_rates = self.get_outage_rates()
+        normalized_deration_rates = self.get_normalized_deration_rates()
+        demand_hours = self.get_demand_hours()
+
+        demand_hours['YEAR'] = demand_hours['START DATETIME'].dt.year
+        demand_hours['UCAP SEASON'] = demand_hours['START DATETIME'].map(self.get_season)
+        demand_hours = demand_hours.loc[demand_hours['DEMAND HOUR'],:]
+        demand_hours = demand_hours.set_index(['YEAR','UCAP SEASON'])
+
+        # Prepare tables of all resources, resource types, years, and seasons:
+        resources = master_resource_database.loc[
+            (master_resource_database['Resource Type'].map(lambda s: s in self.ucap_resource_types)) &
+            (
+                (master_resource_database['Dispatchability']=='Y') |
+                (master_resource_database['Resource Type']=='Nuclear')
+            ),
+            ['Resource ID','Resource Type','Pmax/NDC']
+        ]
+        resources['Resource ID'] = resources['Resource ID'].astype('string')
+        resources['Resource Type'] = resources['Resource Type'].astype('string')
+        resources['Pmax/NDC'] = resources['Pmax/NDC'].astype('float64')
+        resource_types = pd.DataFrame({'Resource Type':self.ucap_resource_types},dtype='string')
+        years = pd.DataFrame({'Year':self.years},dtype='int64')
+        seasons = pd.DataFrame({'Season':self.seasons.keys()},dtype='string')
+
+        # Setup a dataframe to store aggregations by resource, year, and season:
+        r_y_s = resources.join(years,how='cross').join(seasons,how='cross')
+
+        # Setup a dataframe to store aggregations by resource and year:
+        r_y = resources.join(years,how='cross')
+
+        # Setup a dataframe to store aggregations by resource type, year, and
+        # season:
+        rt_y_s = resource_types.join(years,how='cross').join(seasons,how='cross')
+
+        # Setup a dataframe to store aggregations by resource type and season:
+        rt_s = resource_types.merge(
+            resources[['Resource Type','Pmax/NDC']].groupby('Resource Type').sum().reset_index(),
+            on='Resource Type',
+            how='inner'
+        ).join(
+            seasons,
+            how='cross'
+        )
+
+        # Setup a dataframe to store aggregations by resource and season, to
+        # contain the final results
+        r_s = resources.join(seasons,how='cross')
+
+        # Calculate initial aggregations by resource, year, and season (parallelized):
+        r_y_s = r_y_s.merge(
+            caiso_master_capability_list[['RESOURCE_ID','COD']],
+            left_on='Resource ID',right_on='RESOURCE_ID',
+            how='left'
+        )
+        mp_chunks = [{
+            'df' : r_y_s.loc[(r_y_s['Year']==r['Year'])*(r_y_s['Season']==r['Season']),:].copy(),
+            'outage_rates' : outage_rates.loc[(outage_rates['YEAR']==r['Year'])*(outage_rates['SEASON']==r['Season']),:],
+            'normalized_deration_rates' : normalized_deration_rates.loc[(normalized_deration_rates['SEASON']==r['Season']),:],
+            'demand_hours' : demand_hours.loc[(r['Year'],r['Season']),:].reset_index(),
+            'excluded_natures_of_work' : self.excluded_natures_of_work
+        } for _,r in years.merge(seasons,how='cross').iterrows()]
+        with mp.Pool(processes=self.mp_processes_count) as mp_pool:
+            r_y_s = pd.concat(mp_pool.map(first_resource_aggregations_by_resource_year_and_season,mp_chunks))
+        r_y_s.sort_values(by=['Resource ID','Year','Season'],inplace=True)
+
+        # Calculate initial aggregations by resource and year:
+        r_y = r_y.merge(
+            r_y_s[[
+                'Resource ID',
+                'Year',
+                'Individual Calendar Year Demand Hours',
+                'Group Calendar Year Demand Hours',
+                'Individual Typical Weather Year Demand Hours',
+                'Group Typical Weather Year Demand Hours',
+                'Outage MWh during Demand Excluding Ambient',
+                'Weather-Normalized Deration MWh during Demand',
+                'Individual MWh at Pmax during Calendar Year Demand',
+                'Group MWh at Pmax during Calendar Year Demand',
+                'Individual MWh at Pmax during Typical Weather Year Demand',
+                'Group MWh at Pmax during Typical Weather Year Demand'
+            ]].groupby(['Resource ID','Year']).sum().reset_index(),
+            on=['Resource ID','Year'],
+            how='inner'
+        )
+        r_y['Individual EFORd Excluding Ambient'] = r_y['Outage MWh during Demand Excluding Ambient'] \
+            / r_y_s['Individual MWh at Pmax during Calendar Year Demand']
+        r_y['Individual EFORd Weather-Normalized Ambient'] = r_y['Weather-Normalized Deration MWh during Demand'] \
+            / r_y_s['Individual MWh at Pmax during Typical Weather Year Demand']
+
+        # Calculate initial aggregations by resource type, year, and season:
+        rt_y_s = rt_y_s.merge(
+            r_y_s[[
+                'Resource Type',
+                'Year',
+                'Season',
+                'Outage MWh during Demand Excluding Ambient',
+                'Weather-Normalized Deration MWh during Demand',
+                'Individual MWh at Pmax during Calendar Year Demand',
+                'Individual MWh at Pmax during Typical Weather Year Demand',
+            ]].groupby(['Resource Type','Year','Season']).sum().reset_index(),
+            on=['Resource Type','Year','Season'],
+            how='inner'
+        )
+        rt_y_s['EFORd Excluding Ambient First Pass'] = rt_y_s['Outage MWh during Demand Excluding Ambient'] \
+            / rt_y_s['Individual MWh at Pmax during Calendar Year Demand']
+        rt_y_s['EFORD Weather-Normalized Ambient First Pass'] = rt_y_s['Weather-Normalized Deration MWh during Demand'] \
+            / rt_y_s['Individual MWh at Pmax during Typical Weather Year Demand']
+
+        # Calculate second aggregations by resource and year:
+        def f(r):
+            df = rt_y_s.loc[
+                (rt_y_s['Resource Type']==r['Resource Type'])
+                * (rt_y_s['Year']==r['Year']),
+                [
+                    'Outage MWh during Demand Excluding Ambient',
+                    'Individual MWh at Pmax during Calendar Year Demand',
+                    'Weather-Normalized Deration MWh during Demand',
+                    'Individual MWh at Pmax during Typical Weather Year Demand'
+                ]
+            ]
+            return pd.Series((
+                df['Outage MWh during Demand Excluding Ambient'].dot(df['Individual MWh at Pmax during Calendar Year Demand']),
+                df['Weather-Normalized Deration MWh during Demand'].dot(df['Individual MWh at Pmax during Typical Weather Year Demand'])
+            ))
+        r_y[['Group EFORd Excluding Ambient','Group EFORd Weather-Normalized Ambient']] = r_y.apply(
+            f,
+            axis='columns',
+            result_type='expand'
+        )
+        def f(r):
+            if r['Individual Calendar Year Demand Hours']>0 and r['Group Calendar Year Demand Hours']>0:
+                a = (
+                    r['Individual Calendar Year Demand Hours'] * r['Individual EFORd Excluding Ambient']
+                    + r['Group Calendar Year Demand Hours'] * r['Group EFORd Excluding Ambient']
+                ) / (
+                     r['Individual Calendar Year Demand Hours']
+                     + r['Group Calendar Year Demand Hours']
+                )
+                b = (
+                    r['Individual Typical Weather Year Demand Hours'] * r['Individual EFORd Weather-Normalized Ambient']
+                    + r['Group Typical Weather Year Demand Hours'] * r['Group EFORd Weather-Normalized Ambient']
+                ) / (
+                     r['Individual Typical Weather Year Demand Hours']
+                     + r['Group Typical Weather Year Demand Hours']
+                )
+            elif r['Individual Calendar Year Demand Hours']>0:
+                a = r['Individual EFORd Excluding Ambient']
+                b = r['Individual EFORd Weather-Normalized Ambient']
+            elif r['Group Calendar Year Demand Hours']>0:
+                a = r['Group EFORd Excluding Ambient']
+                b = r['Group EFORd Weather-Normalized Ambient']
+            else:
+                a = 0.0
+                b = 0.0
+            return pd.Series((a, b, a + b))
+        r_y[['EFORd Exluding Ambient','EFORd Weather-Normalized Ambient','EFORd']] = r_y.apply(
+            f,
+            axis='columns',
+            result_type='expand'
+        )
+        r_y['Resource Year Rank'] = r_y[['Resource ID','EFORd']].groupby('Resource ID').rank()
+        r_y['Include Resource Year in UCAP'] = r_y['Resource Year Rank'] <= len(self.years) - self.year_exclusion_count
+
+        # Calculate second aggregations by Resource, Year, and Season (parallelized):
+        r_y_s = r_y_s.merge(
+            r_y[['Resource ID','Year','Include Resource Year in UCAP']],
+            on=['Resource ID','Year'],
+            how='inner'
+        )
+        mp_chunks = [{
+            'df' : r_y_s.loc[(r_y_s['Year']==r['Year'])*(r_y_s['Season']==r['Season']),:].copy(),
+            'demand_hours' : demand_hours.loc[(r['Year'],r['Season']),:].reset_index()
+        } for _,r in years.join(seasons,how='cross').iterrows()]
+        with mp.Pool(processes=self.mp_processes_count) as mp_pool:
+            r_y_s = pd.concat(mp_pool.map(second_resource_aggregations_by_resource_year_and_season,mp_chunks))
+        r_y_s.sort_values(by=['Resource ID','Year','Season'],inplace=True)
+
+        # Calculate aggregations by resource and season:
+        r_s = r_s.merge(
+            r_y_s.loc[(r_y_s['Include Resource Year in UCAP']),[
+                'Resource ID',
+                'Season',
+                'Individual Calendar Year Demand Hours',
+                'Group Calendar Year Demand Hours',
+                'Individual Typical Weather Year Demand Hours',
+                'Group Typical Weather Year Demand Hours',
+                'Outage MWh during Demand Excluding Ambient',
+                'Group Outage MWh during Demand Excluding Ambient',
+                'Weather-Normalized Deration MWh during Demand',
+                'Group Weather-Normalized Deration MWh during Demand',
+                'Individual MWh at Pmax during Calendar Year Demand',
+                'Individual MWh at Pmax during Typical Weather Year Demand',
+                'Group MWh at Pmax during Calendar Year Demand',
+                'Group MWh at Pmax during Typical Weather Year Demand'
+            ]].groupby(['Resource ID','Season']).sum().reset_index(),
+            on=['Resource ID','Season'],
+            how='inner'
+        )
+        r_s['Individual EFORd Excluding Ambient'] = r_s['Outage MWh during Demand Excluding Ambient'] \
+            / r_s['Individual MWh at Pmax during Calendar Year Demand']
+        r_s['Individual EFORd Weather-Normalized Ambient'] = r_s['Weather-Normalized Deration MWh during Demand'] \
+            / r_s['Individual MWh at Pmax during Typical Weather Year Demand']
+        r_s['Group EFORd Excluding Ambient'] = r_s['Group Outage MWh during Demand Excluding Ambient'] \
+            / r_s['Group MWh at Pmax during Calendar Year Demand']
+        r_s['Group EFORd Weather-Normalized Ambient'] = r_s['Group Weather-Normalized Deration MWh during Demand'] \
+            / r_s['Group MWh at Pmax during Typical Weather Year Demand']
+        r_s.fillna(value=0,inplace=True)
+        r_s['EFORd Excluding Ambient'] = (
+            r_s['Individual Calendar Year Demand Hours'] * r_s['Individual EFORd Excluding Ambient']
+            + r_s['Group Calendar Year Demand Hours'] * r_s['Group EFORd Excluding Ambient']
+        )/(
+            r_s['Individual Calendar Year Demand Hours'] + r_s['Group Calendar Year Demand Hours']
+        )
+        r_s['EFORd Weather-Normalized Ambient'] = (
+            r_s['Individual Typical Weather Year Demand Hours'] * r_s['Individual EFORd Weather-Normalized Ambient']
+            + r_s['Group Typical Weather Year Demand Hours'] * r_s['Group EFORd Weather-Normalized Ambient']
+        )/(
+            r_s['Individual Typical Weather Year Demand Hours'] + r_s['Group Typical Weather Year Demand Hours']
+        )
+        r_s['EFORd'] = r_s['EFORd Excluding Ambient'] + r_s['EFORd Weather-Normalized Ambient']
+        r_s['UCAP MW'] = r_s['Pmax/NDC'] * (1 - r_s['EFORd'])
+        r_s = r_s.sort_values(by=['Resource Type','Resource ID','Season'])
+
+        # Calculate final aggregation by resource type and season:
+        rt_s = rt_s.merge(
+            r_y_s.loc[(r_y_s['Include Resource Year in UCAP']),[
+                'Resource Type',
+                'Season',
+                'Individual Calendar Year Demand Hours',
+                'Outage MWh during Demand Excluding Ambient',
+                'Weather-Normalized Deration MWh during Demand',
+                'Individual MWh at Pmax during Calendar Year Demand',
+                'Individual MWh at Pmax during Typical Weather Year Demand'
+            ]].groupby(['Resource Type','Season']).sum().reset_index(),
+            on=['Resource Type','Season'],
+            how='inner'
+        )
+        rt_s['EFORd Excluding Ambient'] = rt_s['Outage MWh during Demand Excluding Ambient'] \
+            / rt_s['Individual MWh at Pmax during Calendar Year Demand']
+        rt_s['EFORd Weather-Normalized Ambient'] = rt_s['Weather-Normalized Deration MWh during Demand'] \
+            / rt_s['Individual MWh at Pmax during Typical Weather Year Demand']
+        rt_s['EFORd'] = rt_s['EFORd Excluding Ambient'] + rt_s['EFORd Weather-Normalized Ambient']
+        rt_s['UCAP MW'] = rt_s['Pmax/NDC'] * (1 - rt_s['EFORd'])
+        rt_s = rt_s.sort_values(by=['Resource Type','Season'])
+
+        # Save results to file:
+        r_s.to_csv(ucap_by_resource_season_path,index=False)
+        rt_s.to_csv(ucap_by_resource_type_season_path,index=False)
+        return (r_s,rt_s)
+
+def first_resource_aggregations_by_resource_year_and_season(chunk):
+    '''
+    Helper function for parallelizing calculations in first aggregation by
+    resource, year, and season
+    '''
     df = chunk['df']
-    df['INCLUDE'] = df.apply(
-        lambda r: datetime_range_overlap(
-            chunk['start_datetime'],
-            chunk['end_datetime'],
-            r['CURTAILMENT START DATE TIME'],
-            r['CURTAILMENT END DATE TIME']
-        )>0,
+    outage_rates = chunk['outage_rates']
+    normalized_deration_rates = chunk['normalized_deration_rates']
+    demand_hours = chunk['demand_hours']
+    excluded_natures_of_work = chunk['excluded_natures_of_work']
+
+    df['Outage MWh during Demand Excluding Ambient'] = df.apply(
+        lambda r:outage_rates.loc[
+            (outage_rates['RESOURCE ID']==r['Resource ID'])
+            *(outage_rates['NATURE OF WORK']!='AMBIENT_DUE_TO_TEMP')
+            *(outage_rates['NATURE OF WORK'].map(lambda s: s not in excluded_natures_of_work)),
+            'OUTAGE MWH DURING DEMAND'
+        ].sum(),
         axis='columns',
         result_type='expand'
     )
-    df = df.loc[df['INCLUDE'],:].sort_values(by=['RESOURCE ID','OUTAGE MRID','NATURE OF WORK','CURTAILMENT START DATE TIME'])
-
-    # Filter curtailment data for forced outages and nature-of-work codes
-    # listed in the configuration file:
-    df = df.loc[(df['OUTAGE TYPE']=='FORCED'),:]
-    if chunk['natures_of_work'] is not None:
-        df['INCLUDE'] = df.apply(
-            lambda r: r['NATURE OF WORK'] in chunk['natures_of_work'],
-            axis='columns',
-            result_type='expand'
-        )
-        df = df.loc[df['INCLUDE'],:]
-
-    # Filter curtailment data using commercial operation start date in the
-    # Master Capability List:
-    df = df.set_index('RESOURCE ID').join(
-        chunk['master_capability_list'].set_index('RESOURCE_ID')
-    ).reset_index().rename(
-        columns={
-            'index':'RESOURCE ID',
-            'COD':'COMMERCIAL OPERATION DATE'
-        }
+    df['Weather-Normalized Deration MWh during Demand'] = df.apply(
+        lambda r:normalized_deration_rates.loc[
+            (normalized_deration_rates['RESOURCE ID']==r['Resource ID'])
+            *(normalized_deration_rates['NATURE OF WORK']=='AMBIENT_DUE_TO_TEMP'),
+            'OUTAGE MWH DURING DEMAND'
+        ].sum(),
+        axis='columns',
+        result_type='expand'
     )
-    df.loc[df.loc[:,'COMMERCIAL OPERATION DATE'].isnull(),'COMMERCIAL OPERATION DATE'] = dt(1900,1,1,0,0)
-    df.loc[:,'COMMERCIAL OPERATION DATE'] = df.loc[:,'COMMERCIAL OPERATION DATE'].map(lambda x:dt.fromordinal(x-2+dt(1900,1,1).toordinal()) if type(x)==int else x)
-    df.loc[(df.loc[:,'CURTAILMENT END DATE TIME']>=df.loc[:,'COMMERCIAL OPERATION DATE']),:]
-
-    if len(df.index>0):
-        # Constrain the starts of curtailments to commercial operation date:
-        df.loc[:,'CURTAILMENT START DATE TIME'] = df.apply(
-            lambda r: max(r.loc[['CURTAILMENT START DATE TIME','COMMERCIAL OPERATION DATE']]),
-            axis='columns',
-            result_type='expand'
+    def f(r):
+        return (
+            demand_hours.loc[(demand_hours['START DATETIME']>=r['COD']),'DEMAND HOUR'].count(),
+            demand_hours.loc[(demand_hours['START DATETIME']<r['COD']),'DEMAND HOUR'].count()
         )
-
-        # Calculate reported outage hours within date range and hour filter:
-        df = df.loc[
-            (df.loc[:,'CURTAILMENT START DATE TIME']<=chunk['shared_hour_filter'].loc[:,'END DATETIME'].max()) \
-            & (df.loc[:,'CURTAILMENT END DATE TIME']>=chunk['shared_hour_filter'].loc[:,'START DATETIME'].min()),
-            :
+    df[
+        [
+            'Individual Calendar Year Demand Hours',
+            'Group Calendar Year Demand Hours'
         ]
-
-        # Calculate overlap between outage and demand hours:
-        df.loc[:,'APPLICABLE OUTAGE HOURS'] = df.apply(
-            lambda r:hour_filter_overlap(
-                r.loc['CURTAILMENT START DATE TIME'],
-                r.loc['CURTAILMENT END DATE TIME'],
-                chunk['shared_hour_filter']
-            ),
-            axis='columns',
-            result_type='expand'
+    ] = df.apply(
+        f,
+        axis='columns',
+        result_type='expand'
+    )
+    def f(r):
+        return (
+            demand_hours.loc[
+                (demand_hours['START DATETIME']>=r['COD'])
+                * (~((demand_hours['START DATETIME'].dt.month==2)*(demand_hours['START DATETIME'].dt.day==29))),
+                'DEMAND HOUR'
+            ].count(),
+            demand_hours.loc[
+                (demand_hours['START DATETIME']<r['COD'])
+                * (~((demand_hours['START DATETIME'].dt.month==2)*(demand_hours['START DATETIME'].dt.day==29))),
+                'DEMAND HOUR'
+            ].count()
         )
+    df[
+        [
+            'Individual Typical Weather Year Demand Hours',
+            'Group Typical Weather Year Demand Hours'
+        ]
+    ] = df.apply(
+        f,
+        axis='columns',
+        result_type='expand'
+    )
+    df['Individual MWh at Pmax during Calendar Year Demand'] = df['Pmax/NDC'] \
+        * df['Individual Calendar Year Demand Hours']
+    df['Individual MWh at Pmax during Typical Weather Year Demand'] = df['Pmax/NDC'] \
+        * df['Individual Typical Weather Year Demand Hours']
+    def f(r):
+        if r['Individual Calendar Year Demand Hours']>0 and r['Group Calendar Year Demand Hours']:
+            s = 'Blended'
+        elif r['Individual Calendar Year Demand Hours']>0:
+            s = 'Individual'
+        elif r['Group Calendar Year Demand Hours']>0:
+            s = 'Group'
+        else:
+            s = 'No Data'
+        return s
+    df['EFORd Assessment'] = df.apply(
+        f,
+        axis='columns',
+        result_type='expand'
+    )
+    def f(r):
+        if r['Group Calendar Year Demand Hours']>0:
+            df1 = df.loc[
+                (df['Resource ID']!=r['Resource ID'])
+                *(df['Resource Type']==r['Resource Type']),
+                :
+            ]
+            if not df1.empty:
+                def g(q):
+                    return (
+                        q['Pmax/NDC'] * demand_hours.loc[
+                            (demand_hours['START DATETIME']>=q['COD'])
+                            *(demand_hours['START DATETIME']<r['COD']),
+                            'DEMAND HOUR'
+                        ].count(),
+                        q['Pmax/NDC'] * demand_hours.loc[
+                            (demand_hours['START DATETIME']>=q['COD'])
+                            *(demand_hours['START DATETIME']<r['COD'])
+                            *(~((demand_hours['START DATETIME'].dt.month==2)*(demand_hours['START DATETIME'].dt.day==29))),
+                            'DEMAND HOUR'
+                        ].count()
+                    )
 
-        # Calculate curtailed capacity * outage duration during demand in MWh
-        df.loc[:,'OUTAGE MWH DURING DEMAND'] = df.loc[:,'CURTAILMENT MW'] \
-            * df.loc[:,'APPLICABLE OUTAGE HOURS']
+                return df1.apply(
+                    g,
+                    axis='columns',
+                    result_type='expand'
+                ).sum()
+            else:
+                return pd.Series((0.0,0.0))
+        else:
+            return pd.Series((0.0,0.0))
+    df[[
+        'Group MWh at Pmax during Calendar Year Demand',
+        'Group MWh at Pmax during Typical Weather Year Demand'
+    ]] = df.apply(
+        f,
+        axis='columns',
+        result_type='expand'
+    )
+    df['Individual EFORd Excluding Ambient'] = df['Outage MWh during Demand Excluding Ambient'] \
+        / df['Individual MWh at Pmax during Calendar Year Demand']
+    df['Individual EFORd Weather-Normalized Ambient'] = df['Weather-Normalized Deration MWh during Demand'] \
+        / df['Individual MWh at Pmax during Typical Weather Year Demand']
+    df.fillna(value=0,inplace=True)
+    return df
 
-        # Aggregate by resource id and nature-of-work:
-        df = df.loc[:,[
-            'RESOURCE ID','NATURE OF WORK','OUTAGE MWH DURING DEMAND'
-        ]].groupby(['RESOURCE ID','NATURE OF WORK']).agg({
-            'OUTAGE MWH DURING DEMAND': 'sum'
-        }).reset_index()
-
-    else:
-        df = pd.DataFrame({
-            'RESOURCE ID' : [],
-            'NATURE OF WORK' : [],
-            'OUTAGE MWH DURING DEMAND' : []
-        })
-
-
+def second_resource_aggregations_by_resource_year_and_season(chunk):
+    '''
+    Helper function for parallelizing calculations in second aggregation by
+    resource, year, and season
+    '''
+    df = chunk['df']
+    demand_hours = chunk['demand_hours']
+    def f(r):
+        if r['Group Calendar Year Demand Hours']>0:
+            df1 = df.loc[
+                (df['Resource ID']!=r['Resource ID'])
+                *(df['Resource Type']==r['Resource Type'])
+                *(df['Include Resource Year in UCAP']),
+                :
+            ]
+            if not df1.empty:
+                def g(q):
+                    return pd.Series((
+                        q['Pmax/NDC'] * demand_hours.loc[
+                            (demand_hours['START DATETIME']>=q['COD'])
+                            *(demand_hours['START DATETIME']<r['COD']),
+                            'DEMAND HOUR'
+                        ].count(),
+                        q['Pmax/NDC'] * demand_hours.loc[
+                            (demand_hours['START DATETIME']>=q['COD'])
+                            *(demand_hours['START DATETIME']<r['COD'])
+                            *(~((demand_hours['START DATETIME'].dt.month==2)*(demand_hours['START DATETIME'].dt.day==29))),
+                            'DEMAND HOUR'
+                        ].count()
+                    ))
+                return pd.concat(
+                    (
+                        pd.Series((
+                            df1['Outage MWh during Demand Excluding Ambient'].sum(),
+                            df1['Weather-Normalized Deration MWh during Demand'].sum()
+                        )),
+                        df1.apply(
+                            g,
+                            axis='columns',
+                            result_type='expand'
+                        ).sum()
+                    ),
+                    ignore_index=True
+                )
+            else:
+                return pd.Series((0.0,0.0,0.0,0.0))
+        else:
+            return pd.Series((0.0,0.0,0.0,0.0))
+    df[[
+        'Group Outage MWh during Demand Excluding Ambient',
+        'Group Weather-Normalized Deration MWh during Demand',
+        'Group MWh at Pmax during Calendar Year Demand',
+        'Group MWh at Pmax during Typical Weather Year Demand'
+    ]] = df.apply(
+        f,
+        axis='columns',
+        result_type='expand'
+    )
+    df['Group EFORd Excluding Ambient'] = df['Group Outage MWh during Demand Excluding Ambient'] \
+        / df['Group MWh at Pmax during Calendar Year Demand']
+    df['Group EFORd Weather-Normalized Ambient'] = df['Group Weather-Normalized Deration MWh during Demand'] \
+        / df['Group MWh at Pmax during Typical Weather Year Demand']
+    df['Group EFORd'] = df['Group EFORd Excluding Ambient'] \
+        + df['Group EFORd Weather-Normalized Ambient']
+    df.fillna(value=0,inplace=True)
+    df['EFORd Excluding Ambient'] = (
+        df['Individual Calendar Year Demand Hours'] * df['Individual EFORd Excluding Ambient']
+        + df['Group Calendar Year Demand Hours'] * df['Group EFORd Excluding Ambient']
+    ) / (
+            df['Individual Calendar Year Demand Hours']
+            + df['Group Calendar Year Demand Hours']
+    )
+    df['EFORd Weather-Normalized Ambient'] = (
+        df['Individual Typical Weather Year Demand Hours'] * df['Individual EFORd Weather-Normalized Ambient']
+        + df['Group Typical Weather Year Demand Hours'] * df['Group EFORd Weather-Normalized Ambient']
+    ) / (
+            df['Individual Typical Weather Year Demand Hours']
+            + df['Group Typical Weather Year Demand Hours']
+    )
     return df

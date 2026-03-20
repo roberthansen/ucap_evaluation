@@ -9,7 +9,7 @@ from src.ezdb_connection.sql_strs import get_economic_bid
 from src.ezdb_connection.ezdb_connection \
     import EZBDConnection
 
-if __name__=='__main__':
+def assess_demand_hours():
     with open('config/config.yaml','r') as f:
         config = yaml.safe_load(f)
     with open('config/login.yaml','r') as f:
@@ -46,3 +46,6 @@ if __name__=='__main__':
     resource_level_demand_hours.loc[:,'END DATETIME'] = resource_level_demand_hours.loc[:,'START DATETIME'] + td(hours=1)
     resource_level_demand_hours = resource_level_demand_hours.loc[:,['RESOURCE ID','START DATETIME','END DATETIME','DEMAND HOUR']]
     resource_level_demand_hours.to_parquet(Path(config['demand_hours_analysis']['resource_demand_hours_path']),index=False)
+
+if __name__=='__main__':
+    assess_demand_hours()

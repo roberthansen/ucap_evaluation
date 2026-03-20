@@ -2,6 +2,23 @@ from datetime import datetime, timedelta
 from pandas import DataFrame
 import numpy as np
 
+def datetime_range_contains(tr0:datetime,tr1:datetime,t:datetime):
+    '''
+    Determines whether an input datetime range contains an input datetime.
+
+        parameters:
+            tr0 - a datetime object specifying the start date and time of the
+                range
+            tr1 - a datetime object specifying the end date and time of the
+                range
+            t - a datetime object to compare against the date time range
+        
+        range:
+            a boolean valued true if the datetime range tr0 to tr1 containts t,
+            inclusively
+    '''
+    return t>=tr0 and t<=tr1
+
 def datetime_range_overlap(tr0_0:datetime,tr0_1:datetime,tr1_0:datetime,tr1_1:datetime):
     '''
     Calculate the duration of overlap between two datetime ranges, defined by

@@ -19,12 +19,12 @@ caiso_curtailment_reports:
 weather_data:
   urls:
     weather_station_information: 'https://www.ncei.noaa.gov/pub/data/noaa/isd-history.txt'
-    normalized_weather_inventory: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/doc/hly_inventory_30yr.txt'
+    typical_weather_inventory: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/doc/hly_inventory_30yr.txt'
     historic_data_template: 'https://www.ncei.noaa.gov/data/global-hourly/access/[year]/[file_id].csv'
-    normalized_weather_year_template: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/access/[country]W[wban].csv'
+    typical_weather_year_template: 'https://www.ncei.noaa.gov/data/normals-hourly/1991-2020/access/[country]W[wban].csv'
   download_path_templates:
     historic_data: 'downloads\weather_data\[usaf]-[wban]\[usaf]-[wban]_[year].csv'
-    normalized_weather_year: 'downloads\weather_data\[usaf]-[wban]\[usaf]-[wban]_normalized.csv'
+    typical_weather_year: 'downloads\weather_data\[usaf]-[wban]\[usaf]-[wban]_typical.csv'
   combined_reports_path_template: 'downloads\weather_data_[type].parquet'
   zone_shape_file: 'config\BuildingClimateZonesMap.kmz'
   download_log_path: 'logs\weather_data_download_log.csv'
@@ -40,57 +40,104 @@ resource_information:
   caiso_eia_map:
     path: 'config\caiso_eia_map_2025-12-17.csv'
   master_resource_database:
-    path: 'config\MRD Final 2026_09182025 ver2.xlsx'
+    path: 'config\2026 OFFICIAL MRD 12.10.xlsb.xlsx'
     worksheet_name: MRD
-    caiso_master_capability_list_worksheet_name: 'mastergen (updated SEP)'
+    caiso_master_capability_list_worksheet_name: 'mastergen (updated DEC)'
 demand_hours_analysis:
   resource_demand_hours_path: 'results\resource_demand_hours.parquet'
 ucap_analysis:
   text_log_path: 'logs\ucap_analysis_log.txt'
-  natures_of_work:
-    - AMBIENT_DUE_TO_FUEL_INSUFFICIENCY
-    - AMBIENT_DUE_TO_TEMP
-    - AMBIENT_NOT_DUE_TO_TEMP
-    - ANNUAL_USE_LIMIT_REACHED
-    - AVR_EXITER
-    - ENVIRONMENTAL_RESTRICTIONS
-    - ICCP
-    - METERING_TELEMETRY
-    - MONTHLY_USE_LIMIT_REACHED
+  excluded_natures_of_work:
     - NEW_GENERATOR_TEST_ENERGY
-    - OTHER_USE_LIMIT_REACHED
-    - PLANT_MAINTENANCE
-    - PLANT_TROUBLE
-    - POWER_SYSTEM_STABILIZATION
-    - RIMS_OUTAGE
     - RIMS_TESTING
-    - RTU_RIG
-    - SHORT_TERM_USE_LIMIT_REACHED
-    - TECHNICAL_LIMITATIONS_NOT_IN_MARKET_MODEL
-    - TRANSITIONAL_LIMITATION
     - TRANSMISSION_INDUCED
-    - UNIT_SUPPORTING_STARTUP
     - UNIT_TESTING
-  thermal_resource_types:
+  resource_types:
+    ucap_eligible:
+      - Battery Storage
+      - Biogas
+      - Biomass/Wood
+      - CCGT
+      - CHP
+      - Geothermal
+      - Nuclear
+      - Paired_BattStorage
+      - Peaker
+      - Reciprocating Engine
+    weather_normalization:
     - Biogas
     - Biomass/Wood
     - CCGT
     - CHP
     - Geothermal
+    - Nuclear
     - Peaker
     - Reciprocating Engine
-  years: [2022,2023,2024]
+  years:
+    - 2022
+    - 2023
+    - 2024
+    - 2025
+  servm_weather_years: 
+    - 2000
+    - 2001
+    - 2002
+    - 2003
+    - 2004
+    - 2005
+    - 2006
+    - 2007
+    - 2008
+    - 2009
+    - 2010
+    - 2011
+    - 2012
+    - 2013
+    - 2014
+    - 2015
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+    - 2022
+    - 2023
+    - 2024
+  year_exclusion_count: 1
   seasons:
     summer: [[Jun 1, Oct 31]]
     nonsummer: [[Jan 1, May 31], [Nov 1, Dec 31]]
-  hour_filter_path: 'config\availability_assessment_hours_2022-2024.csv'
-  # hour_filter_path: 'config\all_hours_2022-2024.csv'
+  # hour_filter_path: 'config\availability_assessment_hours_2022-2025.csv'
+  hour_filter_path: 'config\all_hours_2022-2025.csv'
+  # results:
+  #   outage_rates_path_template: 'results\eford_by_resource_and_NOW_AAH_[years].csv'
+  #   ambient_derations_due_to_temperature:
+  #     resource_weather_station_pairs_path: 'results\ambient_due_to_temperature\resource_weather_station_pairs.csv'
+  #     deration_curve_parameters_path_template: 'results\ambient_due_to_temperature\deration_curve_parameters_[years].csv'
+  #     normalized_derations_path_template: 'results\ambient_due_to_temperature\normalized_derations_by_resource_[years].parquet'
+  #     normalized_deration_rates_path_template: 'results\ambient_due_to_temperature\normalized_ambient_temperature_eford_by_resource_[years].csv'
+  #     servm_derations_path_template: 'results\ambient_due_to_temperature\servm_derations_by_resource_all_hours_[years].parquet'
+  #   ucap_by_resource_season_path_template: 'results\ucap_by_resource_season_[years].csv'
+  #   ucap_by_resource_type_season_path_template: 'results\ucap_by_resource_type_season_[years].csv'
   results:
-    outage_path_template: 'results\eford_by_resource_and_NOW_AAH_[years].csv'
-    # outage_path_template: 'results\efor_by_resource_and_NOW_AAH_[years].csv'
-    demand_hours_path_template: 'results\demand_hours_by_resource_AAH_[years].csv'
+    outage_rates_path_template: 'results\efor_by_resource_and_NOW_[years].csv'
     ambient_derations_due_to_temperature:
       resource_weather_station_pairs_path: 'results\ambient_due_to_temperature\resource_weather_station_pairs.csv'
       deration_curve_parameters_path_template: 'results\ambient_due_to_temperature\deration_curve_parameters_[years].csv'
-      normalized_derations_path_template: 'results\ambient_due_to_temperature\normalized_derations_by_resource_[years].parquet'
-      normalized_eford_path_template: 'results\ambient_due_to_temperature\normalized_ambient_temperature_eford_by_resource_[years].csv'
+      normalized_derations_path_template: 'results\ambient_due_to_temperature\normalized_derations_by_resource_all_hours_[years].parquet'
+      normalized_deration_rates_path_template: 'results\ambient_due_to_temperature\normalized_ambient_temperature_efor_by_resource_[years].csv'
+      servm_derations_path_template: 'results\ambient_due_to_temperature\servm_derations_by_resource_all_hours_[years].parquet'
+    ucap_by_resource_season_path_template: 'results\ucap_all_hours_by_resource_season_[years].csv'
+    ucap_by_resource_type_season_path_template: 'results\ucap_all_hours_by_resource_type_season_[years].csv'
+    servm_inputs:
+      time_to_fail:
+      time_to_repair:
+      maintenance_outage_rates:
+      ambient_derations:
+        weather_stations_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_weather_stations_[years].csv'
+        weather_station_assignments_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_weather_station_assignments_[years].csv'
+        weather_shapes_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_weather_shapes_[years].csv'
+        derations_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_derations_due_to_ambient_temperatures_[years].csv'
+multiprocessing:
+  processes_count: 8

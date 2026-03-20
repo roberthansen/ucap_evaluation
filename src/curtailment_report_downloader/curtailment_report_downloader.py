@@ -269,7 +269,7 @@ class CurtailmentReportDownloader:
             # new_dataframe.loc[:,'CURTAILMENT END DATE TIME'] = new_dataframe.loc[:,'CURTAILMENT END DATE TIME'].apply(lambda t: min(t,ts(effective_date)))
 
             # Append new data to dataframe:
-            df = df.append(new_dataframe,ignore_index=True)
+            df = pd.concat([df,new_dataframe],ignore_index=True)
         return df
     
     def update_parquet(self):

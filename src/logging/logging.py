@@ -64,11 +64,11 @@ class TextLogger:
                 message, must match one of the keys of the criticalities dict
         '''
         if criticality in self.criticalities.keys():
+            t = ts.now()
             if self.cli_logging_criticalities & self.criticalities[criticality]:
-                print('{}: {}'.format(criticality,message))
+                print(f'[{t.strftime("%Y-%m-%d %H:%M:")}{t.second+t.microsecond/1e6:07.4f}] {criticality}: {message}')
             if self.file_logging_criticalities & self.criticalities[criticality]:
                 with open(self.log_path,'a') as f:
-                    t = ts.now()
                     entry = '{}{}{}{}{}\n'.format(t.strftime('%Y-%m-%d %H:%M:%S.%f'),self.delimiter,criticality,self.delimiter,message)
                     f.write(entry)
 
