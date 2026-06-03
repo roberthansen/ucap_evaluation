@@ -7,6 +7,8 @@ from datetime import datetime as dt,timedelta as td
 
 from src.logging.logging import TextLogger
 from src.utils.string_functions import replace_template_placeholders
+from src.utils.prepare_curtailment_data import prepare_curtailment_data
+from src.outage_rate_evaluator.outage_rate_evaluator import OutageRateEvaluator
 
 class UCAPEvaluator:
     '''
@@ -45,6 +47,7 @@ class UCAPEvaluator:
             file_logging_criticalities=['WARNING','ERROR'],
             log_path=config['ucap_analysis']['text_log_path']
         )
+        self.outage_rate_evaluator = OutageRateEvaluator(config)
         self.master_resource_database_path = Path(config['resource_information']['master_resource_database']['path'])
         self.master_resource_database_worksheet_name = config['resource_information']['master_resource_database']['worksheet_name']
         self.caiso_master_capability_list_worksheet_name = config['resource_information']['master_resource_database']['caiso_master_capability_list_worksheet_name']
@@ -54,6 +57,8 @@ class UCAPEvaluator:
         self.weather_normalized_resource_types = config['ucap_analysis']['resource_types']['weather_normalization']
         self.outage_rates_path_template = config['ucap_analysis']['results']['outage_rates_path_template']
         self.normalized_deration_rates_path_template = config['ucap_analysis']['results']['ambient_derations_due_to_temperature']['normalized_deration_rates_path_template']
+        self.time_to_fail_and_time_to_repair_distributions_path_template = config['ucap_analysis']['results']['servm_inputs']['time_to_fail_and_time_to_repair_distributions_path_template']
+        self.maintenance_outage_rate_distributions_path_template = config['ucap_analysis']['results']['servm_inputs']['maintenance_outage_rate_distributions_path_template']
         self.years = config['ucap_analysis']['years']
         self.seasons = config['ucap_analysis']['seasons']
         self.year_exclusion_count = config['ucap_analysis']['year_exclusion_count']
@@ -64,6 +69,8 @@ class UCAPEvaluator:
         self.caiso_master_capability_list = pd.DataFrame()
         self.outage_rates = pd.DataFrame()
         self.normalized_deration_rates = pd.DataFrame()
+        self.time_to_fail_and_time_to_repair_distributions = pd.DataFrame()
+        self.maintenance_outage_rate_distributions = pd.DataFrame()
 
         self.ucap_by_resource_season_path_template = config['ucap_analysis']['results']['ucap_by_resource_season_path_template']
         self.ucap_by_resource_type_season_path_template = config['ucap_analysis']['results']['ucap_by_resource_type_season_path_template']
@@ -166,6 +173,30 @@ class UCAPEvaluator:
                 else:
                     pass
         return None
+
+    def get_time_to_fail_and_time_to_repair_distributions(self):
+        '''
+        Calculates or loads from memory the time-to-fail and time-to-repair
+        distributions for each UCAP-eligible resource.
+        '''
+        if self.time_to_fail_and_time_to_repair_distributions.empty:
+            df = self.outage_rate_evaluator.calculate_time_to_fail_and_time_to_repair_distributions('FORCED','PLANT_TROUBLE')
+            self.time_to_fail_and_time_to_repair_distributions = df.copy()
+        else:
+            df = self.time_to_fail_and_time_to_repair_distributions.copy()
+        return df
+
+    def get_maintenance_outage_rate_distributions(self):
+        '''
+        Calculates or loads from memory the maintenance outage rates for each
+        UCAP-eligible resource
+        '''
+        if self.maintenance_outage_rate_distributions.empty:
+            df = self.outage_rate_evaluator.calculate_time_to_fail_and_time_to_repair_distributions('PLANNED','PLANT_MAINTENANCE')
+            self.maintenance_outage_rate_distributions = df.copy()
+        else:
+            df = self.maintenance_outage_rate_distributions.copy()
+        return df
 
     def evaluate_ucap(self):
         '''
@@ -429,6 +460,30 @@ class UCAPEvaluator:
         r_s.to_csv(ucap_by_resource_season_path,index=False)
         rt_s.to_csv(ucap_by_resource_type_season_path,index=False)
         return (r_s,rt_s)
+
+    def generate_servm_outage_statistics_files(self):
+        '''
+        Calculates or retrieves time-to-fail and time-to-repair distributions
+        for all UCAP resources, based separately on forced plant trouble and
+        planned plant maintenanceand saves the results in a format useable in
+        SERVM
+        '''
+
+        # Plant trouble outage distributions:
+        time_to_fail_and_time_to_repair_distributions_path = (replace_template_placeholders(
+            self.time_to_fail_and_time_to_repair_distributions_path_template,
+            {'years' : '{}-{}'.format(min(self.years),max(self.years))}
+        ))
+        df = self.get_time_to_fail_and_time_to_repair_distributions()
+        df.to_csv(time_to_fail_and_time_to_repair_distributions_path,index=False)
+
+        # Maintenance outage distributions:
+        maintenance_outage_rate_distributions_path = Path(replace_template_placeholders(
+            self.maintenance_outage_rate_distributions_path_template,
+            {'years' : '{}-{}'.format(min(self.years),max(self.years))}
+        ))
+        df = self.get_maintenance_outage_rate_distributions()
+        df.to_csv(maintenance_outage_rate_distributions_path,index=False)
 
 def first_resource_aggregations_by_resource_year_and_season(chunk):
     '''

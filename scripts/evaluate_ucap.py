@@ -12,12 +12,12 @@ def evaluate_ucap():
     with open('config/config.yaml') as f:
         config = yaml.safe_load(f)
 
-    ucap_evaluator = UCAPEvaluator(config)
+    # ucap_evaluator = UCAPEvaluator(config)
 
-    # evaluate_outage_rates()
+    evaluate_outage_rates()
     # normalize_derations()
 
-    ucap_evaluator.evaluate_ucap()
+    # ucap_evaluator.evaluate_ucap()
 
 if __name__=='__main__':
     evaluate_ucap()

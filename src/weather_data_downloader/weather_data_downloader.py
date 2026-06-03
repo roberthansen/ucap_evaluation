@@ -1,5 +1,6 @@
 import io
 import re
+import time
 import pycurl
 import requests
 import numpy as np
@@ -110,6 +111,7 @@ class WeatherDataDownloader:
             file_logging_criticalities=['INFORMATION','WARNING','ERROR'],
             log_path=config['weather_data']['text_log_path']
         )
+        self.weather_station_information = pd.DataFrame()
         self.historic_weather_data = pd.DataFrame()
         self.typical_weather_data = pd.DataFrame()
         self.load_parquet('historic')
@@ -453,7 +455,11 @@ class WeatherDataDownloader:
                 c = pycurl.Curl()
                 c.setopt(c.URL,url)
                 c.setopt(c.WRITEDATA,buffer)
-                c.perform()
+                while len(buffer.getvalue())==0:
+                    try:
+                        c.perform()
+                    except pycurl.error:
+                        time.sleep(0.1)
                 c.close()
                 if b'404 Not Found' in buffer.getvalue():
                     self.status_logger.log(f'Unable to download: no valid CSV file available at {url}','WARNING')

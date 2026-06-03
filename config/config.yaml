@@ -43,6 +43,15 @@ resource_information:
     path: 'config\2026 OFFICIAL MRD 12.10.xlsb.xlsx'
     worksheet_name: MRD
     caiso_master_capability_list_worksheet_name: 'mastergen (updated DEC)'
+  remap_resource_ids:
+    - previous_id: GWFPWR_1_UNITS
+      current_id: GWFPWR_1_LDCTG1
+    - previous_id: HENRTA_6_UNITA1
+      current_id: HENRTA_6_ELECTG1
+    - previous_id: HENRTA_6_UNITA2
+      current_id: HENRTA_6_ELECTG2
+    - previous_id: MALAGA_1_PL1X2
+      current_id: MALAGA_1_AUCTG1
 demand_hours_analysis:
   resource_demand_hours_path: 'results\resource_demand_hours.parquet'
 ucap_analysis:
@@ -108,8 +117,14 @@ ucap_analysis:
   seasons:
     summer: [[Jun 1, Oct 31]]
     nonsummer: [[Jan 1, May 31], [Nov 1, Dec 31]]
-  # hour_filter_path: 'config\availability_assessment_hours_2022-2025.csv'
-  hour_filter_path: 'config\all_hours_2022-2025.csv'
+  hour_filter_path: 'config\availability_assessment_hours_corrected_2022-2025.csv'
+  # hour_filter_path: 'config\all_hours_2022-2025.csv'
+  ttf_ttr_percentages:
+    - 0.05
+    - 0.25
+    - 0.50
+    - 0.75
+    - 0.95
   # results:
   #   outage_rates_path_template: 'results\eford_by_resource_and_NOW_AAH_[years].csv'
   #   ambient_derations_due_to_temperature:
@@ -131,9 +146,8 @@ ucap_analysis:
     ucap_by_resource_season_path_template: 'results\ucap_all_hours_by_resource_season_[years].csv'
     ucap_by_resource_type_season_path_template: 'results\ucap_all_hours_by_resource_type_season_[years].csv'
     servm_inputs:
-      time_to_fail:
-      time_to_repair:
-      maintenance_outage_rates:
+      time_to_fail_and_time_to_repair_distributions_path_template: 'results\servm_inputs\ttr_and_ttf_[years].csv'
+      maintenance_outage_rate_distributions_path_template: 'results\servm_inputs\maintenance_outage_rates_[years].csv'
       ambient_derations:
         weather_stations_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_weather_stations_[years].csv'
         weather_station_assignments_path_template: 'results\ambient_due_to_temperature\servm_inputs\[years]\ucap_weather_station_assignments_[years].csv'
